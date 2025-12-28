@@ -77,19 +77,35 @@ def get_comprehensive_stock_list():
             continue
     return pd.DataFrame(all_stocks).drop_duplicates(subset=['symbol'])
 
-# ========== 3. AI 即時點評 (拿掉重試/等待) ==========
+# ========== 3. AI 即時點評 (加入 Cache 檢查：問過不再問) ==========
 def ai_single_stock_analysis(stock_name, symbol, sector):
     if not ai_client: return "AI Client 未啟動"
     
-    prompt = f"你是台股分析師。請簡述「{stock_name} ({symbol})」今日大漲/漲停的可能原因。產業別：{sector}。請用50字內回答。"
-    
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
     try:
+        # 💡 [關鍵：問過不再問] 先檢查 Supabase 今天是否已經分析過這檔股票
+        existing = supabase.table("individual_stock_analysis") \
+            .select("ai_comment") \
+            .eq("analysis_date", today_str) \
+            .eq("symbol", symbol) \
+            .execute()
+
+        if existing.data and len(existing.data) > 0:
+            cached_comment = existing.data[0]['ai_comment']
+            # 如果之前存的是有效分析（不是額度上限的提示），就直接回傳
+            if "額度已達上限" not in cached_comment:
+                log(f"♻️ {stock_name} 今日已分析過，跳過 AI 請求。")
+                return cached_comment
+
+        # 如果資料庫沒資料，才呼叫 AI
+        prompt = f"你是台股分析師。請簡述「{stock_name} ({symbol})」今日大漲/漲停的可能原因。產業別：{sector}。請用50字內回答。"
         response = ai_client.generate_content(prompt)
         ai_msg = response.text.strip()
         
         # 寫入 Supabase
         supabase.table("individual_stock_analysis").upsert({
-            "analysis_date": datetime.now().strftime("%Y-%m-%d"),
+            "analysis_date": today_str,
             "symbol": symbol,
             "stock_name": stock_name,
             "sector": sector,
@@ -97,19 +113,21 @@ def ai_single_stock_analysis(stock_name, symbol, sector):
         }, on_conflict="analysis_date,symbol").execute()
         
         return ai_msg
+
     except Exception as e:
         if "429" in str(e):
-            log(f"🚫 {stock_name} 遇限流 (429)，直接跳過 AI 分析。")
+            log(f"🚫 {stock_name} 遇限流 (429)，直接跳過。")
             return "API 額度已達上限，暫無分析"
         else:
-            log(f"⚠️ {stock_name} 分析失敗: {e}")
+            log(f"⚠️ {stock_name} AI 分析失敗: {e}")
             return "暫無 AI 分析"
 
 # ========== 4. 單一標的下載與判定 ==========
 def process_single_stock(stock):
     symbol = stock['symbol']
     try:
-        df = yf.download(symbol, period="5d", progress=False, threads=False, timeout=12, auto_adjust=True)
+        # 盤中掃描建議 period="2d" 即可，速度更快
+        df = yf.download(symbol, period="2d", progress=False, threads=False, timeout=12, auto_adjust=True)
         if df.empty or len(df) < 2: return None
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
@@ -123,7 +141,7 @@ def process_single_stock(stock):
                     (not stock['is_rotc'] and 0.098 <= ret_vs_prev <= 0.11 and (curr_high / last_close) >= 1.098)
 
         if is_strong:
-            # 偵測到強勢股，呼叫 AI (若遇限流會自動跳過)
+            # 偵測到強勢股，呼叫 AI
             ai_comment = ai_single_stock_analysis(stock['name'], symbol, stock['sector'])
             return {**stock, 'pct': f"{ret_vs_prev:.2%}", 'ai_comment': ai_comment}
             
@@ -148,9 +166,9 @@ def run_monitor():
             limit_ups.append(res)
             log(f"🔥 強勢股: {res['name']} | 漲幅: {res['pct']} | AI: {res['ai_comment']}")
         
-        # 為了避免 yfinance 下載太快被擋，微小休息
         time.sleep(0.01)
 
+    # 💡 最後生成大盤總結 (總結通常還是會跑一次，確保最新的盤勢被納入)
     if limit_ups and ai_client:
         log(f"📊 正在生成大盤分析報告...")
         all_info = [f"{x['name']}({x['sector']})" for x in limit_ups]
