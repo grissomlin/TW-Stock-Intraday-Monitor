@@ -1,0 +1,8 @@
+pandas
+yfinance
+tqdm
+requests
+supabase
+google-generativeai
+python-dotenv
+lxml
