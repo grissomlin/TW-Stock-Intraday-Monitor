@@ -5,8 +5,16 @@ import pandas as pd
 from datetime import datetime, timedelta
 import google.generativeai as genai
 import urllib.parse
-import plotly.express as px
-import plotly.graph_objects as go
+import sys
+
+# ========== 檢查必要套件 ==========
+try:
+    import plotly.express as px
+    import plotly.graph_objects as go
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    PLOTLY_AVAILABLE = False
+    st.warning("⚠️ Plotly 套件未安裝，圖表功能將被禁用。請運行：pip install plotly")
 
 # 設定頁面配置
 st.set_page_config(page_title="Alpha-Refinery 漲停戰情室 2.0", layout="wide")
@@ -24,7 +32,11 @@ st.markdown("""
 # ========== 1. 初始化連線 ==========
 @st.cache_resource
 def init_supabase():
-    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+    try:
+        return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+    except Exception as e:
+        st.error(f"Supabase 連線失敗: {e}")
+        return None
 
 @st.cache_resource
 def init_gemini():
@@ -117,14 +129,31 @@ def fetch_recent_limit_ups(days=5):
         st.error(f"載入近期數據失敗: {e}")
         return pd.DataFrame()
 
-# 載入數據
-df_limit_ups = fetch_today_data("individual_stock_analysis", today)
-df_all_metadata = fetch_all_metadata()
-df_recent = fetch_recent_limit_ups(5)
+# ========== 4. 數據載入 ==========
+if supabase:
+    df_limit_ups = fetch_today_data("individual_stock_analysis", today)
+    df_all_metadata = fetch_all_metadata()
+    df_recent = fetch_recent_limit_ups(5)
+else:
+    df_limit_ups = pd.DataFrame()
+    df_all_metadata = pd.DataFrame()
+    df_recent = pd.DataFrame()
 
-# ========== 4. 側邊欄設定 ==========
+# ========== 5. 側邊欄設定 ==========
 with st.sidebar:
     st.header("⚙️ 設定")
+    
+    # 系統狀態檢查
+    st.subheader("🔧 系統狀態")
+    
+    status_col1, status_col2 = st.columns(2)
+    with status_col1:
+        st.metric("Supabase", "✅" if supabase else "❌")
+    with status_col2:
+        st.metric("Gemini", "✅" if gemini_model else "❌")
+    
+    if not PLOTLY_AVAILABLE:
+        st.error("Plotly 未安裝")
     
     # 密碼保護機制
     st.subheader("🔐 AI 授權設定")
@@ -151,8 +180,8 @@ with st.sidebar:
     # 分析選項
     st.subheader("📊 分析選項")
     show_advanced = st.checkbox("顯示進階分析", value=True)
-    show_history = st.checkbox("顯示歷史趨勢", value=True)
-    show_sector_analysis = st.checkbox("顯示產業分析", value=True)
+    show_history = st.checkbox("顯示歷史趨勢", value=True and PLOTLY_AVAILABLE)
+    show_sector_analysis = st.checkbox("顯示產業分析", value=True and PLOTLY_AVAILABLE)
     
     st.divider()
     
@@ -161,11 +190,23 @@ with st.sidebar:
     st.page_link("https://chatgpt.com/", label="ChatGPT", icon="🤖")
     st.page_link("https://chat.deepseek.com/", label="DeepSeek", icon="🔍")
     st.page_link("https://claude.ai/", label="Claude", icon="📘")
+    
+    st.divider()
+    
+    # 安裝提示
+    if not PLOTLY_AVAILABLE:
+        st.info("💡 請安裝 plotly 套件以啟用圖表功能：")
+        st.code("pip install plotly")
 
-# ========== 5. 主介面呈現 ==========
+# ========== 6. 主介面呈現 ==========
 
 st.title("🚀 Alpha-Refinery 漲停戰情室 2.0")
 st.caption(f"📅 分析日期：{today} | 🕐 最後更新：{datetime.now().strftime('%H:%M:%S')}")
+
+# 檢查系統狀態
+if not supabase:
+    st.error("❌ 資料庫連線失敗，請檢查 Supabase 設定")
+    st.stop()
 
 # --- 區塊一：大盤總結與AI提示詞生成 ---
 with st.expander("📊 今日大盤 AI 總結與分析", expanded=True):
@@ -253,7 +294,7 @@ st.header("🔥 今日強勢股偵測與AI分析")
 
 if not df_limit_ups.empty:
     # 產業分佈視覺化
-    if show_sector_analysis and 'sector' in df_limit_ups.columns:
+    if show_sector_analysis and PLOTLY_AVAILABLE and 'sector' in df_limit_ups.columns:
         sector_counts = df_limit_ups['sector'].value_counts().reset_index()
         sector_counts.columns = ['產業', '漲停家數']
         
@@ -269,6 +310,12 @@ if not df_limit_ups.empty:
         with col_s2:
             st.metric("總漲停家數", f"{len(df_limit_ups)}家")
             st.metric("涉及產業數", f"{len(sector_counts)}個")
+    elif show_sector_analysis and 'sector' in df_limit_ups.columns:
+        # 如果沒有plotly，用文字顯示產業分佈
+        st.subheader("📊 產業分佈（文字版）")
+        sector_counts = df_limit_ups['sector'].value_counts()
+        for sector, count in sector_counts.items():
+            st.write(f"- **{sector}**: {count}家")
     
     # 建立多重連結欄位
     df_limit_ups['玩股網K線'] = df_limit_ups['symbol'].apply(get_wantgoo_url)
@@ -556,7 +603,7 @@ if not df_limit_ups.empty:
             st.code(sector_prompt, language="text", height=300)
     
     # --- 區塊四：歷史趨勢分析（如果數據可用） ---
-    if show_history and not df_recent.empty:
+    if show_history and not df_recent.empty and PLOTLY_AVAILABLE:
         st.divider()
         st.subheader("📈 近期漲停趨勢分析")
         
@@ -619,6 +666,18 @@ if not df_limit_ups.empty:
                 "https://chat.deepseek.com/",
                 use_container_width=True
             )
+    elif show_history and not df_recent.empty:
+        # 如果沒有plotly，用文字顯示趨勢
+        st.divider()
+        st.subheader("📈 近期漲停趨勢分析")
+        
+        df_recent['analysis_date'] = pd.to_datetime(df_recent['analysis_date'])
+        daily_counts = df_recent.groupby('analysis_date').size().reset_index()
+        daily_counts.columns = ['日期', '漲停家數']
+        
+        st.write("近5日漲停家數：")
+        for _, row in daily_counts.iterrows():
+            st.write(f"- {row['日期'].strftime('%m/%d')}: {int(row['漲停家數'])}家")
 
 else:
     st.info("📊 目前尚未偵測到今日強勢標的。")
@@ -634,7 +693,7 @@ else:
     - 分析市場整體狀況
     """)
 
-# ========== 6. 底部導覽列 ==========
+# ========== 7. 底部導覽列 ==========
 st.divider()
 st.markdown("### 🔗 快速資源與工具")
 
