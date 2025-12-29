@@ -107,11 +107,23 @@ def fetch_today_data(table_name, date_str):
 
 @st.cache_data(ttl=3600)
 def fetch_all_metadata():
+    """獲取所有股票元數據 - 根據資料庫實際欄位調整"""
     try:
-        res = supabase.table("stock_metadata").select("symbol, name, sector, market_cap, volume").execute()
+        # 根據您的資料庫，stock_metadata 只有這些欄位：symbol, name, sector, listed_date, isin
+        res = supabase.table("stock_metadata").select("symbol, name, sector").execute()
         return pd.DataFrame(res.data) if res.data else pd.DataFrame()
     except Exception as e:
         st.error(f"載入元數據失敗: {e}")
+        return pd.DataFrame()
+
+@st.cache_data(ttl=3600)
+def fetch_stock_info():
+    """從 stock_info 表獲取股票資訊（如果可用）"""
+    try:
+        res = supabase.table("stock_info").select("symbol, name, sector").execute()
+        return pd.DataFrame(res.data) if res.data else pd.DataFrame()
+    except Exception as e:
+        # 如果 stock_info 表不存在或為空，返回空 DataFrame
         return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
@@ -132,8 +144,19 @@ def fetch_recent_limit_ups(days=5):
 # ========== 4. 數據載入 ==========
 if supabase:
     df_limit_ups = fetch_today_data("individual_stock_analysis", today)
-    df_all_metadata = fetch_all_metadata()
+    df_stock_metadata = fetch_all_metadata()
+    df_stock_info = fetch_stock_info()
     df_recent = fetch_recent_limit_ups(5)
+    
+    # 合併股票資訊來源：優先使用 stock_metadata，如果為空則使用 stock_info
+    if not df_stock_metadata.empty:
+        df_all_metadata = df_stock_metadata
+    elif not df_stock_info.empty:
+        df_all_metadata = df_stock_info
+    else:
+        # 如果都沒有資料，使用今日漲停股票的資訊
+        df_all_metadata = df_limit_ups[['symbol', 'stock_name', 'sector']].copy()
+        df_all_metadata.columns = ['symbol', 'name', 'sector']
 else:
     df_limit_ups = pd.DataFrame()
     df_all_metadata = pd.DataFrame()
@@ -146,11 +169,13 @@ with st.sidebar:
     # 系統狀態檢查
     st.subheader("🔧 系統狀態")
     
-    status_col1, status_col2 = st.columns(2)
+    status_col1, status_col2, status_col3 = st.columns(3)
     with status_col1:
         st.metric("Supabase", "✅" if supabase else "❌")
     with status_col2:
         st.metric("Gemini", "✅" if gemini_model else "❌")
+    with status_col3:
+        st.metric("漲停股票", f"{len(df_limit_ups)}" if not df_limit_ups.empty else "0")
     
     if not PLOTLY_AVAILABLE:
         st.error("Plotly 未安裝")
@@ -496,10 +521,22 @@ if not df_limit_ups.empty:
         
         with col_ir:
             if not df_all_metadata.empty:
-                # 獲取同產業股票
+                # 獲取同產業股票 - 注意欄位名稱可能是 'name' 或 'stock_name'
+                if 'name' in df_all_metadata.columns:
+                    name_column = 'name'
+                elif 'stock_name' in df_all_metadata.columns:
+                    name_column = 'stock_name'
+                else:
+                    name_column = 'symbol'
+                
+                # 根據選中的產業篩選
                 peers = df_all_metadata[df_all_metadata['sector'] == target_sector]
+                
+                # 獲取今日漲停的股票名稱列表
                 current_limit_up_names = df_limit_ups['stock_name'].tolist()
-                not_limit_up_peers = peers[~peers['name'].isin(current_limit_up_names)].copy()
+                
+                # 找出未漲停的同業股票
+                not_limit_up_peers = peers[~peers[name_column].isin(current_limit_up_names)].copy()
                 
                 st.write(f"2. **{target_sector}** 產業中「尚未漲停」的觀察名單（{len(not_limit_up_peers)}家）：")
                 
@@ -509,7 +546,7 @@ if not df_limit_ups.empty:
                     not_limit_up_peers['Goodinfo'] = not_limit_up_peers['symbol'].apply(get_goodinfo_url)
                     
                     # 顯示表格
-                    display_peers = not_limit_up_peers[['symbol', 'name', '玩股網', 'Goodinfo']].head(10)
+                    display_peers = not_limit_up_peers[['symbol', name_column, '玩股網', 'Goodinfo']].head(10)
                     display_peers.columns = ['代碼', '名稱', '📈 K線', '📊 財報']
                     
                     st.dataframe(
@@ -523,7 +560,7 @@ if not df_limit_ups.empty:
                     )
                     
                     # 準備補漲分析提示詞
-                    peer_names = ", ".join(not_limit_up_peers['name'].head(5).tolist())
+                    peer_names = ", ".join(not_limit_up_peers[name_column].head(5).tolist())
                     peer_count = len(not_limit_up_peers)
                     
                     sector_prompt = f"""請分析{target_sector}產業的補漲潛力：
