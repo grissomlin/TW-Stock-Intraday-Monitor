@@ -15,7 +15,7 @@ def init_supabase():
 
 @st.cache_resource
 def init_gemini():
-    """自動偵測可用模型，解決 404 問題"""
+    """自動偵測可用模型，解決 404 與 429 錯誤處理"""
     try:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
@@ -33,9 +33,26 @@ today = datetime.now().strftime("%Y-%m-%d")
 # ========== 2. 輔助函式 ==========
 
 def get_wantgoo_url(symbol):
-    """將代碼 (例如 2330.TW 或 7763.TWO) 轉為玩股網 K 線連結"""
-    code = symbol.split('.')[0]
+    """將代碼 (如 2330.TW 或 7763.TWO) 轉為玩股網 K 線連結"""
+    code = str(symbol).split('.')[0]
     return f"https://www.wantgoo.com/stock/{code}/technical-chart"
+
+def call_ai_safely(prompt):
+    """安全呼叫 AI，處理額度耗盡 (429) 的情況"""
+    if not model:
+        st.error("AI 客戶端未啟動")
+        return
+    try:
+        with st.spinner("AI 正在深度思考中..."):
+            res = model.generate_content(prompt)
+            st.markdown("### 🤖 AI 分析報告")
+            st.write(res.text)
+    except Exception as e:
+        err_msg = str(e)
+        if "429" in err_msg or "ResourceExhausted" in err_msg:
+            st.error("⚠️ AI 額度已耗盡 (Rate Limit Reached)。\n\n由於您使用的是免費版 API，請稍候 1 分鐘再試，或直接點擊旁邊的「📋 複製 Prompt」按鈕手動貼至 ChatGPT / Claude 獲取答案。")
+        else:
+            st.error(f"❌ AI 呼叫失敗: {e}")
 
 @st.cache_data(ttl=600)
 def fetch_today_data(table_name, date_str):
@@ -67,7 +84,7 @@ with st.expander("📊 今日大盤 AI 總結", expanded=True):
     else:
         st.warning(f"📅 尚未找到 {today} 的大盤分析記錄。")
 
-# --- 區塊二：強勢股偵測 (新增超連結與總結按鈕) ---
+# --- 區塊二：強勢股偵測 ---
 st.divider()
 st.header("🔥 今日強勢股偵測")
 
@@ -75,54 +92,50 @@ if not df_limit_ups.empty:
     # 建立 WantGoo 連結欄位
     df_limit_ups['K線圖'] = df_limit_ups['symbol'].apply(get_wantgoo_url)
     
-    # 顯示主表，使用 LinkColumn 讓網址變點擊
+    # 顯示主表
     display_df = df_limit_ups[['stock_name', 'symbol', 'sector', 'K線圖', 'ai_comment']].copy()
-    display_df.columns = ['股票名稱', '代碼', '產業別', '玩股網連結', 'AI 即時點評']
+    display_df.columns = ['股票名稱', '代碼', '產業別', '📈 玩股網', 'AI 即時點評']
     
     st.dataframe(
         display_df, 
         use_container_width=True, 
         hide_index=True,
-        column_config={"玩股網連結": st.column_config.LinkColumn("📈 K線圖", display_text="查看圖表")}
+        column_config={"📈 玩股網": st.column_config.LinkColumn("📈 查看圖表", display_text="點我觀看")}
     )
     
-    # 新增：強勢股「全部一次問」按鈕
+    # --- 強勢股一鍵分析雙按鈕 ---
     st.subheader("💡 強勢標的一鍵總結")
-    all_limit_names = ", ".join(df_limit_ups['stock_name'].tolist())
-    all_prompt = f"今日台股大漲漲停的強勢股包含：{all_limit_names}。請根據這些股票的產業分佈，分析今日市場主流資金在哪個板塊，並推測後市連動性。"
+    all_limit_names = ", ".join([f"{n}({s})" for n, s in zip(df_limit_ups['股票名稱'], df_limit_ups['產業別'])])
+    all_prompt = f"今日台股漲停的強勢股包含：{all_limit_names}。請分析今日市場資金主要集中在哪些族群？這些強勢股是否有共同利多題材？"
 
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("🤖 AI 總結今日強勢族群", type="primary"):
-            if model:
-                with st.spinner("正在分析資金流向..."):
-                    res = model.generate_content(all_prompt)
-                    st.write(res.text)
+        if st.button("🤖 AI 一鍵分析所有強勢股", type="primary"):
+            call_ai_safely(all_prompt)
     with c2:
         if st.button("📋 複製強勢股 Prompt"):
-            st.text_area("複製 Prompt：", value=all_prompt, height=100)
+            st.text_area("複製 Prompt 貼至其他 AI：", value=all_prompt, height=100)
     
-    # --- 區塊三：產業補漲挖掘機 (新增觀察名單超連結) ---
+    # --- 區塊三：產業補漲挖掘機 ---
     st.divider()
     st.subheader("📂 產業族群補漲研究")
     
     col_l, col_r = st.columns([1, 1.2])
     
     with col_l:
-        selected_stock_name = st.selectbox("1. 選擇今日漲停股：", df_limit_ups['stock_name'].tolist())
-        stock_info = df_limit_ups[df_limit_ups['stock_name'] == selected_stock_name].iloc[0]
-        target_sector = stock_info['sector']
+        selected_stock_name = st.selectbox("1. 選擇今日漲停股：", df_limit_ups['股票名稱'].tolist())
+        # 根據選中的名稱找出對應的產業
+        target_sector = df_limit_ups[df_limit_ups['股票名稱'] == selected_stock_name]['產業別'].values[0]
         st.markdown(f"當前選擇：**{selected_stock_name}** | 產業：**{target_sector}**")
 
     with col_r:
         if not df_all_metadata.empty:
             peers = df_all_metadata[df_all_metadata['sector'] == target_sector]
-            current_limit_up_names = df_limit_ups['stock_name'].tolist()
+            current_limit_up_names = df_limit_ups['股票名稱'].tolist()
             not_limit_up_peers = peers[~peers['name'].isin(current_limit_up_names)].copy()
             
             st.write(f"2. {target_sector} 族群中「尚未漲停」的觀察名單：")
             if not not_limit_up_peers.empty:
-                # 加入連結
                 not_limit_up_peers['K線圖'] = not_limit_up_peers['symbol'].apply(get_wantgoo_url)
                 st.dataframe(
                     not_limit_up_peers[['symbol', 'name', 'K線圖']], 
@@ -132,24 +145,21 @@ if not df_limit_ups.empty:
                 )
                 potential_names = ", ".join(not_limit_up_peers['name'].tolist())
             else:
-                st.write("該產業今日全數漲停。")
+                st.write("該產業今日全數漲停或無其他對應個股。")
                 potential_names = "無"
         else:
-            potential_names = "（未匯入資料）"
+            potential_names = "（未匯入 stock_metadata 資料）"
 
-    # --- 區塊四：補漲潛力 AI 分析 ---
-    st.subheader("🧠 補漲潛力分析")
-    sector_prompt = f"在「{target_sector}」產業中，{selected_stock_name} 已漲停。名單 {potential_names} 尚未漲停。請分析誰最有補漲潛力？"
+    # --- 區塊四：補漲分析雙按鈕 ---
+    st.subheader(f"🧠 {target_sector} 補漲潛力分析")
+    sector_prompt = f"在「{target_sector}」產業中，{selected_stock_name} 已漲停。其餘同業如 {potential_names} 尚未漲停。請根據產業面分析誰最有機會補漲？"
 
     c3, c4 = st.columns(2)
     with c3:
-        if st.button(f"🧬 分析 {target_sector} 補漲潛力"):
-            if model:
-                with st.spinner("AI 分析中..."):
-                    response = model.generate_content(sector_prompt)
-                    st.write(response.text)
+        if st.button(f"🧬 分析 {target_sector} 族群連動", type="primary"):
+            call_ai_safely(sector_prompt)
     with c4:
-        if st.button("📋 複製產業 Prompt"):
+        if st.button(f"📋 複製 {target_sector} Prompt"):
             st.text_area("複製 Prompt：", value=sector_prompt, height=100)
 
 else:
