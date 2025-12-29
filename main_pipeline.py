@@ -13,29 +13,49 @@ from tqdm import tqdm
 load_dotenv(dotenv_path=os.path.join(os.getcwd(), '.env'))
 
 # ========== 1. 初始化設定 ==========
+# 從環境變數讀取 (GitHub Secrets / Streamlit Secrets / .env)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+# 建立 Supabase 連線
+if SUPABASE_URL and SUPABASE_KEY:
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+else:
+    print("❌ 警告: 找不到 Supabase URL 或 Key，資料庫功能將失效。")
 
 def get_ai_model_client():
+    """初始化 AI 客戶端並回傳模型實例"""
     if not GEMINI_API_KEY:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] ❌ 失敗: 找不到 GEMINI_API_KEY。")
         return None, None
+    
+    # 遮罩顯示 Key 用於調試 (只顯示前 4 碼與後 4 碼)
+    masked_key = f"{GEMINI_API_KEY[:4]}****{GEMINI_API_KEY[-4:]}"
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔑 已讀取 API Key: {masked_key}")
+
     try:
         genai.configure(api_key=GEMINI_API_KEY)
+        
+        # 獲取可用模型清單
         all_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        candidates = ['models/gemini-1.5-pro', 'models/gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-1.5-flash']
+        
+        # 優先選擇 flash 模型 (速度快、免費額度高)
+        candidates = ['models/gemini-1.5-flash', 'models/gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-1.5-pro']
         target_model_name = next((c for c in candidates if c in all_models), all_models[0] if all_models else None)
         
         if target_model_name:
             model = genai.GenerativeModel(target_model_name)
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ AI 啟動成功! 使用模型: {target_model_name}")
             return model, target_model_name
+        
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ 找不到支援的模型。")
         return None, None
     except Exception as e:
-        print(f"AI 初始化失敗: {e}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] ❌ AI 初始化異常: {str(e)}")
         return None, None
 
+# 執行初始化
 ai_client, active_model_name = get_ai_model_client()
 
 def log(msg: str):
@@ -44,13 +64,9 @@ def log(msg: str):
 # ========== 2. 獲取全市場股票清單 ==========
 def get_comprehensive_stock_list():
     url_configs = [
-        {'name': 'listed', 'is_rotc': False, 'url': 'https://isin.twse.com.tw/isin/class_main.jsp?market=1&issuetype=1&Page=1&chklike=Y', 'suffix': '.TW'},
-        {'name': 'dr', 'is_rotc': False, 'url': 'https://isin.twse.com.tw/isin/class_main.jsp?owncode=&stockname=&isincode=&market=1&issuetype=J&industry_code=&Page=1&chklike=Y', 'suffix': '.TW'},
-        {'name': 'otc', 'is_rotc': False, 'url': 'https://isin.twse.com.tw/isin/class_main.jsp?market=2&issuetype=4&Page=1&chklike=Y', 'suffix': '.TWO'},
-        {'name': 'etf', 'is_rotc': False, 'url': 'https://isin.twse.com.tw/isin/class_main.jsp?owncode=&stockname=&isincode=&market=1&issuetype=I&industry_code=&Page=1&chklike=Y', 'suffix': '.TW'},
-        {'name': 'rotc', 'is_rotc': True, 'url': 'https://isin.twse.com.tw/isin/class_main.jsp?owncode=&stockname=&isincode=&market=E&issuetype=R&industry_code=&Page=1&chklike=Y', 'suffix': '.TWO'},
-        {'name': 'tw_innovation', 'is_rotc': False, 'url': 'https://isin.twse.com.tw/isin/class_main.jsp?owncode=&stockname=&isincode=&market=C&issuetype=C&industry_code=&Page=1&chklike=Y', 'suffix': '.TW'},
-        {'name': 'otc_innovation', 'is_rotc': False, 'url': 'https://isin.twse.com.tw/isin/class_main.jsp?owncode=&stockname=&isincode=&market=A&issuetype=C&industry_code=&Page=1&chklike=Y', 'suffix': '.TWO'},
+        {'name': '上市', 'is_rotc': False, 'url': 'https://isin.twse.com.tw/isin/class_main.jsp?market=1&issuetype=1&Page=1&chklike=Y', 'suffix': '.TW'},
+        {'name': '上櫃', 'is_rotc': False, 'url': 'https://isin.twse.com.tw/isin/class_main.jsp?market=2&issuetype=4&Page=1&chklike=Y', 'suffix': '.TWO'},
+        {'name': '興櫃', 'is_rotc': True, 'url': 'https://isin.twse.com.tw/isin/class_main.jsp?owncode=&stockname=&isincode=&market=E&issuetype=R&industry_code=&Page=1&chklike=Y', 'suffix': '.TWO'},
     ]
     all_stocks = []
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -77,14 +93,15 @@ def get_comprehensive_stock_list():
             continue
     return pd.DataFrame(all_stocks).drop_duplicates(subset=['symbol'])
 
-# ========== 3. AI 即時點評 (加入 Cache 檢查：問過不再問) ==========
+# ========== 3. AI 分析邏輯 ==========
 def ai_single_stock_analysis(stock_name, symbol, sector):
-    if not ai_client: return "AI Client 未啟動"
+    if not ai_client: 
+        return "AI Client 未啟動"
     
     today_str = datetime.now().strftime("%Y-%m-%d")
 
     try:
-        # 💡 [關鍵：問過不再問] 先檢查 Supabase 今天是否已經分析過這檔股票
+        # 1. 檢查快取
         existing = supabase.table("individual_stock_analysis") \
             .select("ai_comment") \
             .eq("analysis_date", today_str) \
@@ -93,17 +110,15 @@ def ai_single_stock_analysis(stock_name, symbol, sector):
 
         if existing.data and len(existing.data) > 0:
             cached_comment = existing.data[0]['ai_comment']
-            # 如果之前存的是有效分析（不是額度上限的提示），就直接回傳
             if "額度已達上限" not in cached_comment:
-                log(f"♻️ {stock_name} 今日已分析過，跳過 AI 請求。")
                 return cached_comment
 
-        # 如果資料庫沒資料，才呼叫 AI
-        prompt = f"你是台股分析師。請簡述「{stock_name} ({symbol})」今日大漲/漲停的可能原因。產業別：{sector}。請用50字內回答。"
+        # 2. 呼叫 Gemini
+        prompt = f"你是台股專家。請用30字內簡述「{stock_name}({symbol})」今日大漲可能原因。產業：{sector}。"
         response = ai_client.generate_content(prompt)
         ai_msg = response.text.strip()
         
-        # 寫入 Supabase
+        # 3. 儲存結果
         supabase.table("individual_stock_analysis").upsert({
             "analysis_date": today_str,
             "symbol": symbol,
@@ -116,19 +131,17 @@ def ai_single_stock_analysis(stock_name, symbol, sector):
 
     except Exception as e:
         if "429" in str(e):
-            log(f"🚫 {stock_name} 遇限流 (429)，直接跳過。")
-            return "API 額度已達上限，暫無分析"
-        else:
-            log(f"⚠️ {stock_name} AI 分析失敗: {e}")
-            return "暫無 AI 分析"
+            return "API 限流中"
+        return f"分析失敗: {str(e)[:20]}"
 
-# ========== 4. 單一標的下載與判定 ==========
+# ========== 4. 股價偵測 ==========
 def process_single_stock(stock):
     symbol = stock['symbol']
     try:
-        # 盤中掃描建議 period="2d" 即可，速度更快
-        df = yf.download(symbol, period="2d", progress=False, threads=False, timeout=12, auto_adjust=True)
+        df = yf.download(symbol, period="2d", progress=False, threads=False, timeout=10)
         if df.empty or len(df) < 2: return None
+        
+        # 處理 yfinance 可能的多層索引
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
             
@@ -136,57 +149,43 @@ def process_single_stock(stock):
         curr_close = float(df['Close'].iloc[-1])
         curr_high = float(df['High'].iloc[-1])
         ret_vs_prev = (curr_close / last_close) - 1
-        
-        is_strong = (stock['is_rotc'] and ret_vs_prev >= 0.098) or \
-                    (not stock['is_rotc'] and 0.098 <= ret_vs_prev <= 0.11 and (curr_high / last_close) >= 1.098)
+
+        # 判定規則：興櫃無漲跌幅限制(設為10%)，上市櫃以9.8%為門檻
+        is_strong = (stock['is_rotc'] and ret_vs_prev >= 0.1) or \
+                    (not stock['is_rotc'] and ret_vs_prev >= 0.098)
 
         if is_strong:
-            # 偵測到強勢股，呼叫 AI
             ai_comment = ai_single_stock_analysis(stock['name'], symbol, stock['sector'])
             return {**stock, 'pct': f"{ret_vs_prev:.2%}", 'ai_comment': ai_comment}
             
     except: return None
     return None
 
-# ========== 5. 主流程 ==========
+# ========== 5. 主程式 ==========
 def run_monitor():
     start_ts = time.time()
-    if active_model_name:
-        log(f"🤖 已啟動 AI 診斷模型: {active_model_name}")
+    
+    # 再次確認 AI 狀態
+    if not ai_client:
+        log("❌ 注意：AI 模組未啟動，將僅進行數據掃描。")
     
     stocks_df = get_comprehensive_stock_list()
     stocks_list = stocks_df.to_dict('records')
     
     limit_ups = []
-    log(f"🚀 開始掃描 (總計 {len(stocks_list)} 檔)...")
+    log(f"🚀 開始全市場掃描 ({len(stocks_list)} 檔)...")
 
-    for s in tqdm(stocks_list, desc="偵測進度"):
+    # 使用 tqdm 顯示進度條
+    for s in tqdm(stocks_list, desc="掃描進度"):
         res = process_single_stock(s)
         if res:
             limit_ups.append(res)
             log(f"🔥 強勢股: {res['name']} | 漲幅: {res['pct']} | AI: {res['ai_comment']}")
         
-        time.sleep(0.01)
+        # 稍微延遲避免被 Yahoo 封鎖 IP
+        time.sleep(0.05)
 
-    # 💡 最後生成大盤總結 (總結通常還是會跑一次，確保最新的盤勢被納入)
-    if limit_ups and ai_client:
-        log(f"📊 正在生成大盤分析報告...")
-        all_info = [f"{x['name']}({x['sector']})" for x in limit_ups]
-        summary_prompt = f"今日台股強勢股：{', '.join(all_info)}。請分析今日資金流向。200字內。"
-        
-        try:
-            summary_res = ai_client.generate_content(summary_prompt)
-            supabase.table("daily_market_summary").upsert({
-                "analysis_date": datetime.now().strftime("%Y-%m-%d"),
-                "stock_count": len(limit_ups),
-                "summary_content": summary_res.text.strip(),
-                "stock_list": ", ".join([x['name'] for x in limit_ups])
-            }, on_conflict="analysis_date").execute()
-            log("✅ 大盤總結完成")
-        except Exception as e:
-            log(f"❌ 總結 AI 失敗: {e}")
-
-    log(f"🏁 任務結束。總耗時: {(time.time() - start_ts)/60:.1f} 分鐘")
+    log(f"🏁 任務結束。共發現 {len(limit_ups)} 檔強勢股。耗時: {(time.time() - start_ts)/60:.1f} 分鐘")
 
 if __name__ == "__main__":
     run_monitor()
