@@ -6,7 +6,7 @@ import pandas as pd
 import yfinance as yf
 from io import StringIO
 from supabase import create_client
-import google.generativeai as genai 
+from google.genai import Client  # 使用新套件
 from tqdm import tqdm
 
 load_dotenv()
@@ -21,9 +21,8 @@ TG_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 # 初始化 Supabase
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL else None
 
-# 初始化 Gemini
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+# 初始化 Gemini (使用新套件)
+genai_client = Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 def log(msg: str):
     tqdm.write(f"{datetime.now().strftime('%H:%M:%S')}: {msg}")
@@ -51,6 +50,9 @@ def send_telegram_msg(message):
 
 def ai_analysis_with_retry(stock_name, symbol, sector, return_rate):
     """AI 分析股票"""
+    if not genai_client:
+        return "AI 服務未初始化"
+    
     today_str = datetime.now().strftime("%Y-%m-%d")
     
     # 快取檢查
@@ -71,7 +73,10 @@ def ai_analysis_with_retry(stock_name, symbol, sector, return_rate):
     
     for attempt in range(3):  # 最多嘗試 3 次
         try:
-            response = model.generate_content(prompt)
+            response = genai_client.models.generate_content(
+                model="gemini-1.5-flash",
+                contents=prompt
+            )
             ai_msg = response.text.strip()
             
             # 儲存到資料庫
@@ -87,13 +92,14 @@ def ai_analysis_with_retry(stock_name, symbol, sector, return_rate):
             return ai_msg
             
         except Exception as e:
-            if "429" in str(e):  # 限流錯誤
+            error_msg = str(e)
+            if "429" in error_msg or "resource exhausted" in error_msg.lower():
                 wait = (attempt + 1) * 15 + random.randint(1, 5)
                 log(f"⚠️ {symbol} 遭限流，等待 {wait} 秒...")
                 time.sleep(wait)
             else:
-                log(f"AI 分析錯誤: {str(e)[:50]}")
-                return f"分析異常: {str(e)[:20]}"
+                log(f"AI 分析錯誤: {error_msg[:50]}")
+                return f"分析異常: {error_msg[:20]}"
     
     return "API 頻繁限流，已放棄"
 
@@ -135,7 +141,7 @@ def get_comprehensive_stock_list():
                         'symbol': code + c['s'], 
                         'name': name, 
                         'sector': row['產業別'] if '產業別' in row else '其他', 
-                        'is_rotc': (c['m'] == 'E')
+                        'is_rotc': (c['m'] == 'E')  # 興櫃股票
                     })
                     count += 1
             
@@ -155,44 +161,98 @@ def get_comprehensive_stock_list():
         log("❌ 無法獲取任何股票資料")
         return []
 
-def update_stock_metadata(stocks):
-    """更新股票基本資料"""
+def create_stock_metadata_table():
+    """建立或更新 stock_metadata 表格（簡化版本）"""
+    if not supabase:
+        return False
+    
+    try:
+        # 先檢查表格是否存在，如果不存在我們需要手動在 Supabase 創建
+        # 這裡我們嘗試簡單的查詢來測試
+        test_query = supabase.table("stock_metadata").select("symbol").limit(1).execute()
+        log("✅ stock_metadata 表格已存在")
+        return True
+    except Exception as e:
+        log(f"⚠️ stock_metadata 表格可能不存在或結構不正確")
+        log(f"請在 Supabase 中執行以下 SQL:")
+        log("""
+        CREATE TABLE stock_metadata (
+            symbol VARCHAR(20) PRIMARY KEY,
+            name VARCHAR(100) NOT NULL,
+            sector VARCHAR(50),
+            is_rotc BOOLEAN DEFAULT FALSE,
+            last_updated TIMESTAMP DEFAULT NOW()
+        );
+        """)
+        return False
+
+def update_stock_metadata_simple(stocks):
+    """簡化的股票基本資料更新（不包含 is_rotc）"""
     if not supabase or not stocks:
         return False
     
     try:
-        log("💾 更新股票基本資料...")
+        log("💾 更新股票基本資料（簡化版）...")
         
-        # 先清除舊資料（可選）
-        # supabase.table("stock_metadata").delete().neq("symbol", "").execute()
+        success_count = 0
+        fail_count = 0
         
         for i, stock in enumerate(stocks):
             try:
+                # 只更新必要的欄位，排除 is_rotc
                 supabase.table("stock_metadata").upsert({
                     "symbol": stock['symbol'],
                     "name": stock['name'],
                     "sector": stock['sector'],
-                    "is_rotc": stock['is_rotc'],
                     "last_updated": datetime.now().isoformat()
                 }).execute()
+                success_count += 1
                 
                 # 每100檔顯示一次進度
                 if (i+1) % 100 == 0:
                     log(f"  已更新 {i+1}/{len(stocks)} 檔股票基本資料")
                     
             except Exception as e:
-                log(f"  更新 {stock['symbol']} 失敗: {str(e)[:50]}")
+                fail_count += 1
+                if fail_count <= 5:  # 只顯示前5個錯誤
+                    log(f"  更新 {stock['symbol']} 失敗: {str(e)[:50]}")
                 continue
         
-        log(f"✅ 完成更新 {len(stocks)} 檔股票基本資料")
+        log(f"✅ 完成更新 {success_count} 檔股票基本資料，失敗 {fail_count} 檔")
         return True
         
     except Exception as e:
         log(f"❌ 更新股票基本資料失敗: {e}")
         return False
 
-def save_daily_summary(limit_up_stocks, total_scanned):
-    """儲存每日市場總結"""
+def create_daily_summary_table():
+    """建立或更新 daily_market_summary 表格"""
+    if not supabase:
+        return False
+    
+    try:
+        # 測試查詢
+        test_query = supabase.table("daily_market_summary").select("analysis_date").limit(1).execute()
+        log("✅ daily_market_summary 表格已存在")
+        return True
+    except Exception as e:
+        log(f"⚠️ daily_market_summary 表格可能不存在")
+        log(f"請在 Supabase 中執行以下 SQL:")
+        log("""
+        CREATE TABLE daily_market_summary (
+            id SERIAL PRIMARY KEY,
+            analysis_date DATE NOT NULL UNIQUE,
+            total_scanned INTEGER DEFAULT 0,
+            limit_up_count INTEGER DEFAULT 0,
+            summary_content TEXT,
+            sector_distribution TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+        """)
+        return False
+
+def save_daily_summary_simple(limit_up_stocks, total_scanned):
+    """簡化的每日市場總結儲存"""
     if not supabase:
         return False
     
@@ -220,20 +280,28 @@ def save_daily_summary(limit_up_stocks, total_scanned):
             for i, stock in enumerate(sorted_stocks[:10], 1):
                 summary_content += f"{i}. {stock['name']}({stock['symbol']}): {stock['return']:.2%}\n"
         
-        # 儲存到資料庫
-        supabase.table("daily_market_summary").upsert({
-            "analysis_date": today_str,
-            "total_scanned": total_scanned,
-            "limit_up_count": len(limit_up_stocks),
-            "summary_content": summary_content,
-            "sector_distribution": str(sector_counts)
-        }).execute()
-        
-        log(f"✅ 已儲存今日市場總結")
-        return True
+        # 嘗試儲存到資料庫
+        try:
+            supabase.table("daily_market_summary").upsert({
+                "analysis_date": today_str,
+                "total_scanned": total_scanned,
+                "limit_up_count": len(limit_up_stocks),
+                "summary_content": summary_content,
+                "sector_distribution": str(sector_counts)
+            }).execute()
+            
+            log(f"✅ 已儲存今日市場總結")
+            return True
+            
+        except Exception as db_error:
+            # 如果儲存失敗，只記錄到日誌
+            log(f"⚠️ 資料庫儲存失敗，但程式繼續執行: {db_error}")
+            # 仍然顯示總結到日誌
+            log(f"📊 市場總結內容:\n{summary_content}")
+            return False
         
     except Exception as e:
-        log(f"❌ 儲存市場總結失敗: {e}")
+        log(f"❌ 生成市場總結失敗: {e}")
         return False
 
 def get_stock_price_data(symbol, retry_count=3):
@@ -249,7 +317,7 @@ def get_stock_price_data(symbol, retry_count=3):
                     continue
                 return None, None
             
-            # 修正 FutureWarning：使用 .item() 而不是 float()
+            # 修正 FutureWarning
             close_data = df['Close']
             if len(close_data) >= 2:
                 try:
@@ -261,8 +329,14 @@ def get_stock_price_data(symbol, retry_count=3):
                         return None, None
                     
                     # 計算漲跌幅
-                    ret = (float(curr_close) / float(prev_close)) - 1
-                    return ret, float(curr_close)
+                    curr_price = float(curr_close) if hasattr(curr_close, 'item') else curr_close
+                    prev_price = float(prev_close) if hasattr(prev_close, 'item') else prev_close
+                    
+                    if prev_price == 0:
+                        return None, None
+                    
+                    ret = (curr_price / prev_price) - 1
+                    return ret, curr_price
                     
                 except Exception as e:
                     log(f"  ⚠️ 處理 {symbol} 價格數據失敗: {e}")
@@ -285,6 +359,10 @@ def run_monitor():
     log("🚀 啟動智能台股監控系統 (單執行緒版)...")
     log(f"📅 執行時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
+    # 檢查 Gemini 服務
+    if not genai_client:
+        log("⚠️ Gemini AI 服務未初始化，將跳過 AI 分析")
+    
     # 獲取股票清單
     stocks = get_comprehensive_stock_list()
     
@@ -293,8 +371,12 @@ def run_monitor():
         send_telegram_msg("❌ *股票監控失敗*\n無法獲取股票清單")
         return
     
-    # 更新股票基本資料
-    update_stock_metadata(stocks)
+    # 檢查資料庫表格
+    create_stock_metadata_table()
+    create_daily_summary_table()
+    
+    # 更新股票基本資料（簡化版）
+    update_stock_metadata_simple(stocks)
     
     # 發送開始通知
     send_telegram_msg(
@@ -322,10 +404,17 @@ def run_monitor():
                 continue
             
             # 漲幅門檻判定
-            threshold = 0.1 if s['is_rotc'] else 0.098
+            # 使用 s['is_rotc'] 判斷是否為興櫃
+            is_rotc = s.get('is_rotc', False)
+            threshold = 0.1 if is_rotc else 0.098
+            
             if ret >= threshold:
                 # AI 分析
-                ai_comment = ai_analysis_with_retry(s['name'], s['symbol'], s['sector'], ret)
+                ai_comment = ""
+                if genai_client:
+                    ai_comment = ai_analysis_with_retry(s['name'], s['symbol'], s['sector'], ret)
+                else:
+                    ai_comment = "AI 服務未啟用"
                 
                 # 記錄漲停股票
                 limit_up_stocks.append({
@@ -334,7 +423,8 @@ def run_monitor():
                     'sector': s['sector'],
                     'return': ret,
                     'price': curr_price,
-                    'ai_comment': ai_comment
+                    'ai_comment': ai_comment,
+                    'is_rotc': is_rotc
                 })
                 
                 # 發送 Telegram 通知
@@ -342,6 +432,7 @@ def run_monitor():
                     f"🔥 *強勢股: {s['name']}* ({s['symbol']})\n"
                     f"📈 漲幅: {ret:.2%}\n"
                     f"💵 價格: {curr_price:.2f}\n"
+                    f"🏷️ 類別: {'興櫃' if is_rotc else '上市/上櫃'}\n"
                     f"🤖 AI 分析: {ai_comment}"
                 )
                 
@@ -360,7 +451,7 @@ def run_monitor():
             continue
     
     # 儲存每日總結
-    save_daily_summary(limit_up_stocks, len(stocks))
+    save_daily_summary_simple(limit_up_stocks, len(stocks))
     
     # 發送結束通知
     msg_end = (
@@ -387,6 +478,14 @@ def run_monitor():
     log(f"成功掃描: {len(stocks) - error_count}")
     log(f"錯誤數量: {error_count}")
     log(f"漲停板數: {found_count}")
+    
+    # 分類統計
+    if limit_up_stocks:
+        rotc_count = sum(1 for stock in limit_up_stocks if stock.get('is_rotc', False))
+        main_count = found_count - rotc_count
+        log(f"上市/上櫃漲停: {main_count} 檔")
+        log(f"興櫃漲停: {rotc_count} 檔")
+    
     log("="*50)
 
 if __name__ == "__main__":
