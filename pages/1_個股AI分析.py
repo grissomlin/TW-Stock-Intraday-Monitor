@@ -377,6 +377,243 @@ if supabase:
         # 提示詞放在最下方
         with st.expander("📋 查看完整分析提示詞", expanded=False):
             st.code(enhanced_prompt, language="text", height=300)
+        
+        # ========== 🎯 個股深度分析（新增功能） ==========
+        st.divider()
+        st.subheader("🎯 個股深度分析")
+        
+        # 建立股票選擇下拉選單
+        stock_options = []
+        for _, row in df_limit_ups.iterrows():
+            display_text = f"{row['symbol']} {row['stock_name']}"
+            if 'consecutive_days' in row and row['consecutive_days'] > 0:
+                display_text += f" ({row['consecutive_days']}連板)"
+            stock_options.append((display_text, row))
+        
+        # 下拉選單
+        selected_display = st.selectbox(
+            "請選擇要分析的漲停股：",
+            options=[so[0] for so in stock_options],
+            key="stock_selector"
+        )
+        
+        # 找到選擇的股票
+        selected_stock = None
+        for display, stock in stock_options:
+            if display == selected_display:
+                selected_stock = stock
+                break
+        
+        if selected_stock is not None:
+            # 顯示股票詳細資訊
+            col_info1, col_info2, col_info3, col_info4 = st.columns(4)
+            
+            with col_info1:
+                st.metric("今日狀態", f"{selected_stock.get('consecutive_days', 1)} 連板")
+            
+            with col_info2:
+                # 這裡可以加入更多統計數據，例如歷史漲停次數等
+                # 目前先顯示今日漲幅
+                return_rate = selected_stock.get('return_rate', 0)
+                st.metric("今日漲幅", f"{return_rate:.2%}" if return_rate else "N/A")
+            
+            with col_info3:
+                # 這裡可以加入更多統計數據
+                # 目前先顯示價格
+                price = selected_stock.get('price', 0)
+                st.metric("當前價格", f"{price:.2f}" if price else "N/A")
+            
+            with col_info4:
+                # 這裡可以加入隔日溢價等統計數據
+                # 目前先顯示產業
+                st.metric("所屬產業", selected_stock.get('sector', 'N/A'))
+            
+            # ========== 同產業聯動參考 ==========
+            current_sector = selected_stock.get('sector', '')
+            if current_sector:
+                # 找出同產業的其他股票
+                same_sector_stocks = df_limit_ups[df_limit_ups['sector'] == current_sector].copy()
+                same_sector_stocks = same_sector_stocks[same_sector_stocks['symbol'] != selected_stock['symbol']]
+                
+                if not same_sector_stocks.empty:
+                    st.write(f"🌿 **同產業聯動參考 ({current_sector})：**")
+                    
+                    # 建立連結列表
+                    related_links = []
+                    for _, r in same_sector_stocks.iterrows():
+                        link_url = get_wantgoo_url(r['symbol'])
+                        status_icon = "🔥" if r.get('consecutive_days', 0) > 0 else "➡️"
+                        seq_info = f" ({r.get('consecutive_days', 0)}板)" if r.get('consecutive_days', 0) > 0 else ""
+                        related_links.append(f"[{r['symbol']}{seq_info} {status_icon}]({link_url})")
+                    
+                    # 顯示產業聯動分析
+                    st.markdown(" ".join(related_links))
+                    
+                    # 自動生成同產業分析提示詞
+                    if len(same_sector_stocks) > 0:
+                        industry_stocks = same_sector_stocks.copy()
+                        industry_table = industry_stocks[['symbol', 'stock_name', 'consecutive_days']].to_markdown(index=False)
+                        
+                        industry_prompt = f"""分析台灣股市{current_sector}產業的連動效應：
+
+核心個股：{selected_stock['symbol']} {selected_stock['stock_name']} (連板{selected_stock.get('consecutive_days', 1)}天)
+同產業漲停夥伴：{len(industry_stocks)}家
+
+## 同產業漲停清單
+{industry_table}
+
+## 分析問題
+1. **產業聯動強度**：從漲停家數看，{current_sector}是否形成板塊效應？
+2. **龍頭辨識**：{selected_stock['symbol']}是否是產業龍頭？從連板天數判斷。
+3. **擴散效應**：產業內漲停是否從龍頭擴散到其他個股？
+4. **風險評估**：產業集體漲停後，歷史回調風險如何？
+5. **操作策略**：在產業聯動效應下，最佳進出場時機為何？
+
+請提供具體的交易策略建議。"""
+                        
+                        encoded_industry_prompt = urllib.parse.quote(industry_prompt)
+                        st.link_button(
+                            f"🤝 分析{current_sector}產業聯動效應 (ChatGPT)",
+                            f"https://chatgpt.com/?q={encoded_industry_prompt}",
+                            use_container_width=True
+                        )
+                else:
+                    st.caption("暫無同產業其他公司數據")
+            
+            # ========== 🤖 AI 專家診斷 ==========
+            st.divider()
+            st.subheader(f"🤖 AI 專家診斷：{selected_stock['stock_name']}")
+            
+            # 自動生成個股AI提示詞
+            expert_prompt = f"""你是專業短線交易員。請深度分析股票 {selected_stock['symbol']} {selected_stock['stock_name']}：
+
+## 基本資料
+- 市場：TW | 產業：{selected_stock.get('sector', 'N/A')}
+- 今日狀態：連板第 {selected_stock.get('consecutive_days', 1)} 天
+- 今日漲幅：{selected_stock.get('return_rate', 0):.2%}
+
+## 股票資訊
+- 股票代碼：{selected_stock['symbol']}
+- 股票名稱：{selected_stock['stock_name']}
+- 產業類別：{selected_stock.get('sector', 'N/A')}
+- 當前價格：{selected_stock.get('price', 'N/A')}
+- AI點評：{selected_stock.get('ai_comment', 'N/A')}
+
+## 技術分析維度
+1. **連板天數解析**：當前{selected_stock.get('consecutive_days', 1)}連板在市場中處於什麼位置？
+2. **漲停強度分析**：今日漲幅{selected_stock.get('return_rate', 0):.2%}顯示什麼市場情緒？
+3. **產業地位**：在{selected_stock.get('sector', 'N/A')}產業中的領導地位？
+
+## 市場心理維度
+4. **市場情緒**：當前連板數反映的市場情緒溫度？
+5. **資金流向**：為何資金選擇這檔股票？可能的催化劑是什麼？
+6. **風險偏好**：適合何種風險偏好的投資者？
+
+## 風險控制建議
+7. **最大風險**：最可能導致虧損的情境？
+8. **停損策略**：基於技術分析的最佳停損點位？
+9. **資金配置**：建議的單筆投資比例？
+
+## 具體操作建議
+10. **進場時機**：明日開盤、盤中、還是等待回調？
+11. **出場策略**：目標價位與持有時間建議？
+12. **替代方案**：如果錯過此股，同產業其他選擇？
+
+請提供量化、具體、可執行的交易計劃。"""
+
+            # 顯示提示詞
+            with st.expander("📋 查看完整AI分析提示詞", expanded=True):
+                st.code(expert_prompt, language="text")
+            
+            # AI平台按鈕
+            col_ai1, col_ai2, col_ai3, col_ai4 = st.columns(4)
+            
+            with col_ai1:
+                # ChatGPT一鍵帶入
+                encoded_prompt = urllib.parse.quote(expert_prompt)
+                st.link_button(
+                    "🔥 ChatGPT 分析",
+                    f"https://chatgpt.com/?q={encoded_prompt}",
+                    use_container_width=True,
+                    help="自動在ChatGPT中打開此股票分析"
+                )
+            
+            with col_ai2:
+                st.link_button(
+                    "🔍 DeepSeek 分析",
+                    "https://chat.deepseek.com/",
+                    use_container_width=True,
+                    help="請複製上方提示詞貼到DeepSeek"
+                )
+            
+            with col_ai3:
+                st.link_button(
+                    "📘 Claude 分析",
+                    "https://claude.ai/",
+                    use_container_width=True,
+                    help="請複製上方提示詞貼到Claude"
+                )
+            
+            with col_ai4:
+                # Gemini內建診斷（密碼保護）
+                if st.session_state.gemini_authorized:
+                    if st.button("🤖 Gemini 分析", use_container_width=True, type="primary"):
+                        with st.spinner("Gemini正在分析中..."):
+                            ai_response = call_ai_safely(expert_prompt, gemini_model)
+                            if ai_response:
+                                st.session_state.gemini_stock_report = ai_response
+                                st.rerun()
+                else:
+                    st.markdown('<div class="password-protected">', unsafe_allow_html=True)
+                    st.info("🔒 Gemini 需要授權解鎖")
+                    auth_pw = st.text_input("授權密碼：", type="password", key="stock_gemini_pw")
+                    if st.button("解鎖 Gemini", key="stock_gemini_auth"):
+                        if auth_pw == st.secrets.get("AI_ASK_PASSWORD", "default_password"):
+                            st.session_state.gemini_authorized = True
+                            st.rerun()
+                        else:
+                            st.error("密碼錯誤")
+                    st.markdown('</div>', unsafe_allow_html=True)
+            
+            # === Gemini 個股報告獨立顯示 ===
+            if 'gemini_stock_report' in st.session_state:
+                st.divider()
+                with st.expander(f"🤖 Gemini 個股分析報告：{selected_stock['stock_name']}", expanded=True):
+                    ai_response = st.session_state.gemini_stock_report
+                    st.markdown(
+                        f"""
+                        <div style="
+                            background-color: #f8f9fa !important;
+                            padding: 30px !important;
+                            border-radius: 15px !important;
+                            border-left: 8px solid #28a745 !important;
+                            box-shadow: 0 6px 20px rgba(0,0,0,0.12) !important;
+                            line-height: 2 !important;
+                            font-size: 17px !important;
+                            white-space: pre-wrap !important;
+                            word-wrap: break-word !important;
+                            max-width: 100% !important;
+                            width: 100% !important;
+                            box-sizing: border-box !important;
+                            margin: 10px 0 !important;
+                        ">
+                        {ai_response.replace('\n', '<br>')}
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+                    report_text = f"# {selected_stock['stock_name']} AI分析報告\n\n日期：{today}\n\n{ai_response}"
+                    st.download_button(
+                        label="📥 下載分析報告 (.md)",
+                        data=report_text.encode('utf-8'),
+                        file_name=f"{selected_stock['symbol']}_analysis_{today}.md",
+                        mime="text/markdown",
+                        use_container_width=True
+                    )
+                    if st.button("🗑️ 清除此報告", type="secondary"):
+                        del st.session_state.gemini_stock_report
+                        st.rerun()
+    
     else:
         st.info("📊 目前尚未偵測到今日強勢標的。")
 else:
