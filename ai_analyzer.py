@@ -1,75 +1,92 @@
 # -*- coding: utf-8 -*-
 """
-AI 分析核心模組
+AI 分析核心模組 - GitHub Actions 版本
 """
-import google.generativeai as genai
 import os
+import sys
 import json
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
-from supabase import create_client
 import pandas as pd
-from .prompts import StockPrompts
+
+# 嘗試導入 google-generativeai
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ google-generativeai 未安裝: {e}")
+    GEMINI_AVAILABLE = False
+    genai = None
+
+# 嘗試導入提示詞模組
+try:
+    from prompts import StockPrompts
+    PROMPTS_AVAILABLE = True
+except ImportError:
+    print("⚠️ 無法導入 StockPrompts，將創建簡單替代")
+    PROMPTS_AVAILABLE = False
+    
+    # 簡單的提示詞類替代
+    class SimplePrompts:
+        @staticmethod
+        def get_individual_stock_prompt(stock_info, consecutive_days, recent_history=None):
+            return f"分析股票: {stock_info.get('name')} ({stock_info.get('symbol')}), 連板{consecutive_days}天"
+        
+        @staticmethod
+        def get_sector_analysis_prompt(sector_name, stocks_in_sector, market_context):
+            return f"分析產業: {sector_name}, 共{len(stocks_in_sector)}檔股票漲停"
+        
+        @staticmethod
+        def get_market_summary_prompt(all_stocks, sector_distribution, market_indicators):
+            return f"分析市場總結: 共{len(all_stocks)}檔漲停"
 
 class StockAIAnalyzer:
     """股票AI分析器"""
     
     def __init__(self, api_key: str, supabase_client=None):
         """初始化AI分析器"""
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-1.5-flash')
         self.supabase = supabase_client
-        
-        # 快取機制，避免重複分析
         self.analyzed_cache = {}
         
-    def get_consecutive_limit_up_days(self, symbol: str) -> Dict:
-        """
-        查詢連續漲停天數
-        返回：{'consecutive_days': int, 'recent_history': List}
-        """
-        if not self.supabase:
-            return {'consecutive_days': 1, 'recent_history': []}
+        # 檢查Gemini是否可用
+        if not GEMINI_AVAILABLE:
+            print("❌ google-generativeai 不可用，AI分析功能將禁用")
+            self.model = None
+            return
         
         try:
-            # 查詢最近5天的記錄
-            today = datetime.now().strftime("%Y-%m-%d")
-            five_days_ago = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
+            genai.configure(api_key=api_key)
             
-            response = self.supabase.table("individual_stock_analysis")\
-                .select("*")\
-                .eq("symbol", symbol)\
-                .gte("analysis_date", five_days_ago)\
-                .lte("analysis_date", today)\
-                .order("analysis_date", desc=True)\
-                .execute()
+            # 嘗試不同的模型名稱
+            model_names = [
+                'gemini-1.5-flash',
+                'models/gemini-1.5-flash',
+                'gemini-1.5-flash-latest',
+                'gemini-pro'
+            ]
             
-            if not response.data:
-                return {'consecutive_days': 1, 'recent_history': []}
-            
-            # 找出連續漲停天數
-            consecutive_days = 0
-            recent_history = []
-            
-            for i, record in enumerate(response.data):
-                if record.get('return_rate', 0) >= 0.098:  # 漲停閾值
-                    consecutive_days += 1
-                    recent_history.append({
-                        'date': record['analysis_date'],
-                        'return': record['return_rate']
-                    })
-                else:
+            self.model = None
+            for model_name in model_names:
+                try:
+                    self.model = genai.GenerativeModel(model_name)
+                    print(f"✅ 使用模型: {model_name}")
                     break
+                except Exception as e:
+                    print(f"❌ 模型 {model_name} 不可用: {e}")
+                    continue
             
-            return {
-                'consecutive_days': consecutive_days or 1,
-                'recent_history': recent_history[:3]  # 最近3天
-            }
+            if self.model is None:
+                print("❌ 所有模型都不可用")
             
         except Exception as e:
-            print(f"查詢連續漲停失敗 {symbol}: {e}")
-            return {'consecutive_days': 1, 'recent_history': []}
+            print(f"❌ AI分析器初始化失敗: {e}")
+            self.model = None
     
+    def is_available(self):
+        """檢查AI分析器是否可用"""
+        return self.model is not None
+    
+    # ... 其餘的方法保持不變
     def analyze_individual_stock(self, stock_info: Dict) -> Optional[str]:
         """
         分析單一漲停股票
