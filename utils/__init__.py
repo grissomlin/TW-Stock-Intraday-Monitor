@@ -11,7 +11,5 @@ from .utils import (
     call_ai_safely
 )
 
-# 也可以導入 common.py 中的函數
-from .common import (
-    # 這裡可以列出 common.py 中你想要暴露的函數
-)
+# 注意：common.py 是一個完整的 Streamlit 頁面，不應該從中導入函數
+# 它應該被直接運行或通過頁面路由訪問
