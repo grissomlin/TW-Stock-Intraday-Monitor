@@ -1,10 +1,20 @@
 # -*- coding: utf-8 -*-
-import os, sys, requests, time, json
+"""
+台股漲停板監控系統 - 完整版
+包含：隨機延遲、Telegram 限流處理、個股連結等功能
+"""
+import os
+import sys
+import time
+import random
+import json
+import requests
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import pandas as pd
 import yfinance as yf
 from io import StringIO
+from supabase import create_client
 import warnings
 from tqdm import tqdm
 
@@ -12,7 +22,6 @@ from tqdm import tqdm
 warnings.filterwarnings('ignore')
 
 # ========== 手動添加路徑 ==========
-# 在 GitHub Actions 中，需要明確添加當前目錄到 Python 路徑
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 
@@ -28,32 +37,7 @@ try:
     print("✅ AI模組導入成功")
 except ImportError as e:
     print(f"⚠️ AI模組導入失敗: {e}")
-    print("嘗試重新導入...")
-    
-    # 嘗試另一種導入方式
-    try:
-        # 直接從當前目錄導入
-        import importlib.util
-        
-        # 導入 ai_analyzer
-        ai_analyzer_path = os.path.join(current_dir, "ai_analyzer.py")
-        spec = importlib.util.spec_from_file_location("ai_analyzer", ai_analyzer_path)
-        ai_analyzer_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(ai_analyzer_module)
-        StockAIAnalyzer = ai_analyzer_module.StockAIAnalyzer
-        
-        # 導入 prompts
-        prompts_path = os.path.join(current_dir, "prompts.py")
-        spec = importlib.util.spec_from_file_location("prompts", prompts_path)
-        prompts_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(prompts_module)
-        StockPrompts = prompts_module.StockPrompts
-        
-        AI_AVAILABLE = True
-        print("✅ AI模組動態導入成功")
-    except Exception as e2:
-        print(f"❌ AI模組動態導入失敗: {e2}")
-        AI_AVAILABLE = False
+    AI_AVAILABLE = False
 
 # ========== 載入環境變數 ==========
 load_dotenv()
@@ -74,8 +58,6 @@ print(f"  GEMINI_API_KEY: {'已設置' if GEMINI_API_KEY else '未設置'}")
 print(f"  AI模組可用: {AI_AVAILABLE}")
 
 # ========== 初始化 ==========
-from supabase import create_client
-
 # 初始化 Supabase
 supabase = None
 if SUPABASE_URL and SUPABASE_KEY:
@@ -88,15 +70,20 @@ else:
     print("⚠️ Supabase 環境變數未設置")
 
 # 初始化 AI 分析器
-if AI_AVAILABLE and GEMINI_API_KEY and supabase:
+ai_analyzer = None
+if AI_AVAILABLE and GEMINI_API_KEY:
     try:
         ai_analyzer = StockAIAnalyzer(GEMINI_API_KEY, supabase)
-        print("✅ AI分析器初始化成功")
+        if ai_analyzer.is_available():
+            print("✅ AI分析器初始化成功")
+        else:
+            print("⚠️ AI分析器部分功能不可用")
+            ai_analyzer = None
     except Exception as e:
         print(f"❌ AI分析器初始化失敗: {e}")
         ai_analyzer = None
 else:
-    print("⚠️ AI分析器未初始化 (檢查: AI_AVAILABLE={AI_AVAILABLE}, GEMINI_API_KEY={'已設置' if GEMINI_API_KEY else '未設置'}, supabase={'已連接' if supabase else '未連接'})")
+    print("⚠️ AI分析器未初始化")
 
 # ========== 日誌設定 ==========
 def log(msg: str, level="INFO"):
@@ -106,8 +93,8 @@ def log(msg: str, level="INFO"):
     print(formatted_msg, flush=True)
 
 # ========== 功能模組 ==========
-def send_telegram_msg(message):
-    """發送訊息到 Telegram"""
+def send_telegram_msg(message, delay=0.1):
+    """發送訊息到 Telegram（帶延遲避免限流）"""
     if not TG_TOKEN or not TG_CHAT_ID:
         log("⚠️ Telegram 憑證未設置")
         return
@@ -124,11 +111,33 @@ def send_telegram_msg(message):
         response = requests.post(url, json=payload, timeout=10)
         if response.status_code == 200:
             log(f"Telegram 訊息發送成功")
+        elif response.status_code == 429:
+            # 被限流，等待一段時間後重試
+            retry_after = response.json().get('parameters', {}).get('retry_after', 5)
+            log(f"Telegram 限流，等待 {retry_after} 秒後重試")
+            time.sleep(retry_after)
+            # 重試一次
+            response = requests.post(url, json=payload, timeout=10)
         else:
             log(f"Telegram 發送失敗: {response.status_code}")
     except Exception as e:
         log(f"Telegram 發送錯誤: {e}")
+    
+    # 避免限流，添加延遲
+    time.sleep(delay)
 
+def get_stock_links(symbol):
+    """獲取股票相關連結"""
+    code = str(symbol).split('.')[0]  # 取小數點左邊的字串
+    
+    return {
+        '玩股網': f"https://www.wantgoo.com/stock/{code}/technical-chart",
+        'Goodinfo': f"https://goodinfo.tw/tw/StockBZPerformance.asp?STOCK_ID={code}",
+        '鉅亨網': f"https://www.cnyes.com/twstock/{code}/",
+        'Yahoo股市': f"https://tw.stock.yahoo.com/quote/{code}.TW",
+        '財報狗': f"https://statementdog.com/analysis/{code}/",
+        'CMoney': f"https://www.cmoney.tw/finance/f00025.aspx?s={code}"
+    }
 
 def get_taiwan_stock_list():
     """獲取台灣完整股票清單"""
@@ -143,7 +152,7 @@ def get_taiwan_stock_list():
     ]
     
     all_stocks = []
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     
     log("開始獲取台灣股票清單...")
     
@@ -151,7 +160,9 @@ def get_taiwan_stock_list():
         log(f"獲取 {config['name']} 類別...")
         
         try:
-            time.sleep(0.5)
+            # 隨機延遲 0.3-0.8 秒
+            time.sleep(random.uniform(0.3, 0.8))
+            
             response = requests.get(config['url'], headers=headers, timeout=15)
             response.raise_for_status()
             response.encoding = 'big5'
@@ -168,7 +179,8 @@ def get_taiwan_stock_list():
                         'symbol': f"{code}{config['suffix']}",
                         'name': name,
                         'sector': row['產業別'] if '產業別' in row else '其他',
-                        'is_rotc': (config['name'] == 'rotc')
+                        'is_rotc': (config['name'] == 'rotc'),
+                        'market': '上市' if config['suffix'] == '.TW' and config['name'] != 'rotc' else '上櫃' if config['suffix'] == '.TWO' else '興櫃'
                     }
                     all_stocks.append(stock_data)
                     count += 1
@@ -182,20 +194,40 @@ def get_taiwan_stock_list():
     if all_stocks:
         df_stocks = pd.DataFrame(all_stocks).drop_duplicates(subset=['symbol'])
         log(f"📊 總共獲取 {len(df_stocks)} 檔股票")
+        
+        # 顯示統計
+        log(f"  上市股票: {len(df_stocks[df_stocks['market'] == '上市'])}")
+        log(f"  上櫃股票: {len(df_stocks[df_stocks['market'] == '上櫃'])}")
+        log(f"  興櫃股票: {len(df_stocks[df_stocks['market'] == '興櫃'])}")
+        
         return df_stocks.to_dict('records')
     else:
         log("❌ 無法獲取任何股票資料")
         return []
 
-def get_stock_price_data(symbol, max_retries=2):
-    """獲取股票價格數據（改進版）"""
+def get_stock_price_data(symbol, max_retries=3):
+    """獲取股票價格數據（帶隨機延遲）"""
     for attempt in range(max_retries):
         try:
-            df = yf.download(symbol, period="2d", progress=False, timeout=10)
+            # 隨機延遲 0.2-0.5 秒，避免被 Yahoo Finance 阻擋
+            if attempt > 0:
+                delay = random.uniform(0.5, 1.5)
+                time.sleep(delay)
+            else:
+                time.sleep(random.uniform(0.1, 0.3))
+            
+            # 嘗試下載數據
+            df = yf.download(
+                symbol, 
+                period="2d", 
+                progress=False, 
+                timeout=15,
+                threads=False  # 避免多線程問題
+            )
             
             if df.empty or len(df) < 2:
+                log(f"⚠️ {symbol}: 數據不足，嘗試 {attempt+1}/{max_retries}")
                 if attempt < max_retries - 1:
-                    time.sleep(1)
                     continue
                 return None, None, None
             
@@ -214,10 +246,11 @@ def get_stock_price_data(symbol, max_retries=2):
             return None, None, None
             
         except Exception as e:
+            log(f"⚠️ {symbol}: 獲取價格失敗 (嘗試 {attempt+1}/{max_retries}): {str(e)[:50]}")
             if attempt < max_retries - 1:
-                time.sleep(1)
+                # 重試前等待更長時間
+                time.sleep(random.uniform(1.0, 2.0))
                 continue
-            return None, None, None
     
     return None, None, None
 
@@ -256,16 +289,19 @@ def get_consecutive_limit_up_days(symbol):
             if return_rate is None:
                 break
                 
-            if float(return_rate) >= threshold:
-                consecutive_days += 1
-            else:
+            try:
+                if float(return_rate) >= threshold:
+                    consecutive_days += 1
+                else:
+                    break
+            except (ValueError, TypeError):
                 break
         
         return max(consecutive_days, 1)
         
     except Exception as e:
         log(f"查詢連續漲停天數失敗 {symbol}: {e}")
-        return 11
+        return 1
 
 def save_stock_with_analysis(stock_info):
     """儲存股票分析資訊到資料庫"""
@@ -360,7 +396,7 @@ def update_consecutive_limit_up(stock_info):
         log(f"更新連續漲停追蹤失敗 {stock_info['symbol']}: {e}")
 
 def send_layered_notifications(stocks, sector_analyses, market_summary):
-    """分層推播通知"""
+    """分層推播通知（帶個股連結）"""
     
     # 1. 個股推播（最多10檔）
     log("📤 發送個股推播通知...")
@@ -368,6 +404,7 @@ def send_layered_notifications(stocks, sector_analyses, market_summary):
     
     for stock in top_stocks:
         days = stock.get('consecutive_days', 1)
+        stock_code = stock['symbol'].split('.')[0]  # 提取股票代碼
         
         if days >= 3:
             emoji = "🚀🚀🚀"
@@ -381,19 +418,23 @@ def send_layered_notifications(stocks, sector_analyses, market_summary):
         
         ai_preview = stock.get('ai_comment', '')[:100] if stock.get('ai_comment') else ''
         
+        # 建立玩股網連結
+        wantgoo_url = f"https://www.wantgoo.com/stock/{stock_code}/technical-chart"
+        goodinfo_url = f"https://goodinfo.tw/tw/StockBZPerformance.asp?STOCK_ID={stock_code}"
+        
         msg = (
             f"{emoji} *{priority} 強勢股: {stock['name']}* ({stock['symbol']})\n"
             f"📈 漲幅: {stock['return']:.2%} | 連板: {days}天\n"
             f"💵 價格: {stock['price']:.2f}\n"
             f"🏷️ 類別: {'興櫃' if stock['is_rotc'] else '上市/上櫃'}\n"
-            f"📊 產業: {stock['sector']}"
+            f"📊 產業: {stock['sector']}\n"
+            f"🔗 分析: [玩股網]({wantgoo_url}) | [Goodinfo]({goodinfo_url})"
         )
         
         if ai_preview:
             msg += f"\n🤖 AI: {ai_preview}..."
         
-        send_telegram_msg(msg)
-        time.sleep(0.1)
+        send_telegram_msg(msg, delay=0.2)  # 增加延遲避免限流
     
     # 2. 產業推播（最多5個產業）
     if sector_analyses:
@@ -406,11 +447,12 @@ def send_layered_notifications(stocks, sector_analyses, market_summary):
             if sector_stocks:
                 leader = max(sector_stocks, key=lambda x: x.get('consecutive_days', 1))
                 leader_days = leader.get('consecutive_days', 1)
+                leader_code = leader['symbol'].split('.')[0]
                 
                 msg = (
                     f"🏭 *產業趨勢: {sector}*\n"
                     f"📊 漲停家數: {stocks_count}家\n"
-                    f"👑 龍頭股: {leader['name']}({leader_days}連板)\n"
+                    f"👑 龍頭股: {leader['name']}({leader_days}連板) [分析](https://www.wantgoo.com/stock/{leader_code}/technical-chart)\n"
                     f"🤖 AI分析: {analysis[:200]}..."
                 )
             else:
@@ -420,8 +462,7 @@ def send_layered_notifications(stocks, sector_analyses, market_summary):
                     f"🤖 AI分析: {analysis[:200]}..."
                 )
             
-            send_telegram_msg(msg)
-            time.sleep(0.1)
+            send_telegram_msg(msg, delay=0.2)
     
     # 3. 市場總結推播
     if market_summary:
@@ -432,20 +473,62 @@ def send_layered_notifications(stocks, sector_analyses, market_summary):
         main_count = total_stocks - rotc_count
         avg_consecutive = sum(s.get('consecutive_days', 1) for s in stocks) / total_stocks if total_stocks > 0 else 0
         
-        msg = (
-            f"📊 *今日市場AI總結*\n"
-            f"📈 總漲停: {total_stocks}檔\n"
-            f"📊 上市櫃: {main_count} | 興櫃: {rotc_count}\n"
-            f"📅 平均連板: {avg_consecutive:.1f}天\n"
-            f"🤖 市場分析: {market_summary[:300]}..."
-        )
+        # 找出今日最強股票
+        if stocks:
+            strongest = max(stocks, key=lambda x: x.get('consecutive_days', 1))
+            strongest_code = strongest['symbol'].split('.')[0]
+            
+            msg = (
+                f"📊 *今日市場AI總結*\n"
+                f"📈 總漲停: {total_stocks}檔\n"
+                f"📊 上市櫃: {main_count} | 興櫃: {rotc_count}\n"
+                f"📅 平均連板: {avg_consecutive:.1f}天\n"
+                f"👑 最強股: {strongest['name']}({strongest['consecutive_days']}連板) [分析](https://www.wantgoo.com/stock/{strongest_code}/technical-chart)\n"
+                f"🤖 市場分析: {market_summary[:300]}..."
+            )
+        else:
+            msg = (
+                f"📊 *今日市場AI總結*\n"
+                f"📈 總漲停: {total_stocks}檔\n"
+                f"📊 上市櫃: {main_count} | 興櫃: {rotc_count}\n"
+                f"📅 平均連板: {avg_consecutive:.1f}天\n"
+                f"🤖 市場分析: {market_summary[:300]}..."
+            )
         
-        send_telegram_msg(msg)
+        send_telegram_msg(msg, delay=0.2)
 
-# ========== 4. 主執行邏輯 ==========
+def send_basic_notification(stocks):
+    """發送基本通知（當AI不可用時）"""
+    if not stocks:
+        return
+    
+    log("📤 發送基本漲停通知...")
+    
+    msg = f"📊 *今日漲停板 ({len(stocks)}檔)*\n\n"
+    
+    # 按產業分組
+    sector_groups = {}
+    for stock in stocks:
+        sector = stock.get('sector', '其他')
+        if sector not in sector_groups:
+            sector_groups[sector] = []
+        sector_groups[sector].append(stock)
+    
+    for sector, sector_stocks in sector_groups.items():
+        msg += f"🏭 *{sector}* ({len(sector_stocks)}檔):\n"
+        for stock in sector_stocks[:3]:  # 每個產業最多顯示3檔
+            stock_code = stock['symbol'].split('.')[0]
+            msg += f"  • [{stock['name']}({stock['symbol']})](https://www.wantgoo.com/stock/{stock_code}/technical-chart): {stock['return']:.2%}\n"
+        if len(sector_stocks) > 3:
+            msg += f"   ...還有 {len(sector_stocks)-3} 檔\n"
+        msg += "\n"
+    
+    send_telegram_msg(msg)
+
+# ========== 主執行邏輯 ==========
 def run_monitor():
     start_time = time.time()
-    log("🚀 啟動台股漲停板掃描系統（AI增強版）...")
+    log("🚀 啟動台股漲停板掃描系統（增強版）...")
     log(f"開始時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     # 檢查連線
@@ -478,23 +561,46 @@ def run_monitor():
     symbols = [stock['symbol'] for stock in stocks]
     stock_dict = {stock['symbol']: stock for stock in stocks}
     
-    # 批量下載
-    batch_size = 150
+    # 批量下載（帶隨機延遲）
+    batch_size = 100  # 減小批次大小，避免被阻擋
     batches = [symbols[i:i + batch_size] for i in range(0, len(symbols), batch_size)]
+    
+    log(f"分成 {len(batches)} 個批次進行掃描...")
     
     # 掃描漲停股票
     for batch_idx, batch_symbols in enumerate(tqdm(batches, desc="批次進度", unit="batch")):
         try:
-            df_batch = yf.download(batch_symbols, period="2d", progress=False, group_by='ticker')
+            # 批次間隨機延遲
+            if batch_idx > 0:
+                delay = random.uniform(1.0, 2.5)
+                time.sleep(delay)
+            
+            # 嘗試批量下載
+            df_batch = yf.download(
+                batch_symbols, 
+                period="2d", 
+                progress=False, 
+                group_by='ticker',
+                threads=False,
+                timeout=30
+            )
             
             for symbol in batch_symbols:
                 try:
                     stock_info = stock_dict[symbol]
-                    if symbol not in df_batch:
+                    
+                    # 檢查是否成功下載
+                    if symbol not in df_batch.columns.levels[0]:
                         error_count += 1
                         continue
                     
                     df = df_batch[symbol]
+                    
+                    # 檢查數據是否足夠
+                    if df.empty or 'Close' not in df.columns:
+                        error_count += 1
+                        continue
+                    
                     close_data = df['Close'].dropna()
                     if len(close_data) < 2:
                         error_count += 1
@@ -519,6 +625,7 @@ def run_monitor():
                             'price': float(curr_close),
                             'prev_close': float(prev_close),
                             'is_rotc': stock_info['is_rotc'],
+                            'market': stock_info.get('market', ''),
                             'consecutive_days': 1  # 稍後會計算
                         }
                         limit_up_stocks.append(info)
@@ -529,10 +636,10 @@ def run_monitor():
                     continue
                     
         except Exception as e:
-            log(f"批次 {batch_idx} 下載失敗: {e}")
+            log(f"批次 {batch_idx} 下載失敗: {str(e)[:100]}")
             error_count += len(batch_symbols)
-        
-        time.sleep(1)
+            # 批次失敗後等待更長時間
+            time.sleep(random.uniform(3.0, 5.0))
     
     log(f"掃描完成，發現 {found_count} 檔漲停股票")
     
@@ -568,11 +675,11 @@ def run_monitor():
                         # 更新連續漲停追蹤
                         update_consecutive_limit_up(stock)
                 
-                # 避免API限制，每分析一支股票等待0.5秒
-                time.sleep(0.5)
+                # 避免API限制，每分析一支股票等待1-2秒
+                time.sleep(random.uniform(1.0, 2.0))
                 
             except Exception as e:
-                log(f"個股AI分析失敗 {stock['symbol']}: {e}")
+                log(f"個股AI分析失敗 {stock['symbol']}: {str(e)[:100]}")
                 continue
         
         # 3. 產業AI分析
@@ -594,10 +701,10 @@ def run_monitor():
                         save_sector_analysis(sector, stocks_in_sector, analysis)
                     
                     # 避免API限制
-                    time.sleep(0.5)
+                    time.sleep(random.uniform(1.5, 2.5))
                     
                 except Exception as e:
-                    log(f"產業AI分析失敗 {sector}: {e}")
+                    log(f"產業AI分析失敗 {sector}: {str(e)[:100]}")
         
         # 4. 市場AI分析
         log("📊 進行市場AI分析...")
@@ -605,7 +712,7 @@ def run_monitor():
         try:
             market_summary = ai_analyzer.analyze_market_summary(limit_up_stocks)
         except Exception as e:
-            log(f"市場AI分析失敗: {e}")
+            log(f"市場AI分析失敗: {str(e)[:100]}")
         
         # 5. 發送分層通知
         send_layered_notifications(limit_up_stocks, sector_analyses, market_summary)
@@ -624,6 +731,7 @@ def run_monitor():
                 supabase.table("daily_market_summary").upsert(safe_data).execute()
             except Exception as e:
                 log(f"更新市場總結失敗: {e}")
+    
     else:
         if limit_up_stocks:
             log("⚠️ AI分析器不可用，跳過AI分析階段")
@@ -649,8 +757,9 @@ def run_monitor():
         sorted_stocks = sorted(limit_up_stocks, key=lambda x: x.get('consecutive_days', 1), reverse=True)
         for i, stock in enumerate(sorted_stocks[:10], 1):
             days = stock.get('consecutive_days', 1)
+            stock_code = stock['symbol'].split('.')[0]
             stock_type = "興" if stock['is_rotc'] else "普"
-            msg_end += f"\n{i}. {stock['name']}({stock['symbol']}): {stock['return']:.2%} [{days}連板]"
+            msg_end += f"\n{i}. [{stock['name']}({stock['symbol']})](https://www.wantgoo.com/stock/{stock_code}/technical-chart): {stock['return']:.2%} [{days}連板]"
     
     send_telegram_msg(msg_end)
     
@@ -690,7 +799,3 @@ if __name__ == "__main__":
     except Exception as e:
         log(f"❌ 程式執行錯誤: {e}")
         send_telegram_msg(f"❌ *程式執行錯誤*\n錯誤訊息: {str(e)[:100]}")
-
-
-
-
