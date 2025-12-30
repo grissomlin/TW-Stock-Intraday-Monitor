@@ -426,49 +426,33 @@ if not df_limit_ups.empty:
         )
     
     with col_a4:
+    # 顯示提示詞和AI按鈕
+    col_a1, col_a2, col_a3, col_a4 = st.columns(4)
+   
+    with col_a1:
+        encoded_prompt = urllib.parse.quote(enhanced_prompt)
+        st.link_button(
+            "🔥 ChatGPT 分析",
+            f"https://chatgpt.com/?q={encoded_prompt}",
+            use_container_width=True
+        )
+   
+    with col_a2:
+        st.link_button("🔍 DeepSeek 分析", "https://chat.deepseek.com/", use_container_width=True)
+   
+    with col_a3:
+        st.link_button("📘 Claude 分析", "https://claude.ai/", use_container_width=True)
+   
+    with col_a4:
         if st.session_state.gemini_authorized:
             if st.button("🤖 Gemini 分析", use_container_width=True, type="primary"):
                 with st.spinner("Gemini正在分析中..."):
                     ai_response = call_ai_safely(enhanced_prompt)
                     if ai_response:
-                        # 移出 column，直接整行顯示
-                        st.markdown("")  # 空行分隔
-                        st.markdown("### 🤖 Gemini 強勢股分析報告")
-                        st.markdown("---")
-                        
-                        st.markdown(
-                            f"""
-                            <div style="
-                                background-color: #f8f9fa !important;
-                                padding: 30px !important;
-                                border-radius: 15px !important;
-                                border-left: 6px solid #28a745 !important;
-                                box-shadow: 0 6px 16px rgba(0,0,0,0.1) !important;
-                                line-height: 2 !important;
-                                font-size: 17px !important;
-                                white-space: pre-wrap !important;
-                                word-wrap: break-word !important;
-                                max-width: 100% !important;
-                                width: 100% !important;
-                                box-sizing: border-box !important;
-                                margin: 20px 0 !important;
-                            ">
-                            {ai_response.replace('\n', '<br>')}
-                            </div>
-                            """,
-                            unsafe_allow_html=True
-                        )
-                        
-                        report_text = f"# 今日強勢股分析報告\n\n日期：{today}\n\n{ai_response}"
-                        st.download_button(
-                            label="📥 下載分析報告 (.md)",
-                            data=report_text.encode('utf-8'),
-                            file_name=f"strong_stocks_analysis_{today}.md",
-                            mime="text/markdown",
-                            use_container_width=True
-                        )
+                        # 把回傳結果存到 session_state，避免重刷消失
+                        st.session_state.gemini_strong_report = ai_response
+                        st.rerun()
         else:
-            # 原本的鎖定提示
             st.markdown('<div class="password-protected">', unsafe_allow_html=True)
             st.info("🔒 Gemini 需要授權解鎖")
             auth_pw = st.text_input("授權密碼：", type="password", key="strong_stocks_pw")
@@ -479,7 +463,53 @@ if not df_limit_ups.empty:
                 else:
                     st.error("密碼錯誤")
             st.markdown('</div>', unsafe_allow_html=True)
-    
+
+    # === 關鍵：把報告獨立放在提示詞上方 ===
+    if 'gemini_strong_report' in st.session_state:
+        with st.expander("🤖 Gemini 強勢股分析報告", expanded=True):
+            ai_response = st.session_state.gemini_strong_report
+            
+            st.markdown(
+                f"""
+                <div style="
+                    background-color: #f8f9fa !important;
+                    padding: 30px !important;
+                    border-radius: 15px !important;
+                    border-left: 8px solid #28a745 !important;
+                    box-shadow: 0 6px 20px rgba(0,0,0,0.12) !important;
+                    line-height: 2 !important;
+                    font-size: 17px !important;
+                    white-space: pre-wrap !important;
+                    word-wrap: break-word !important;
+                    max-width: 100% !important;
+                    width: 100% !important;
+                    box-sizing: border-box !important;
+                    margin: 10px 0 !important;
+                ">
+                {ai_response.replace('\n', '<br>')}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            
+            # 下載按鈕放在報告裡面
+            report_text = f"# 今日強勢股分析報告\n\n日期：{today}\n\n{ai_response}"
+            st.download_button(
+                label="📥 下載分析報告 (.md)",
+                data=report_text.encode('utf-8'),
+                file_name=f"strong_stocks_analysis_{today}.md",
+                mime="text/markdown",
+                use_container_width=True
+            )
+            
+            # 可選：加一個清除報告的按鈕
+            if st.button("🗑️ 清除此報告", type="secondary"):
+                del st.session_state.gemini_strong_report
+                st.rerun()
+
+    # 提示詞放在報告下方
+    with st.expander("📋 查看完整分析提示詞", expanded=False):
+        st.code(enhanced_prompt, language="text", height=300)
     # 顯示完整提示詞
     with st.expander("📋 查看完整分析提示詞", expanded=False):
         st.code(enhanced_prompt, language="text", height=300)
@@ -740,6 +770,7 @@ with col_tool4:
     st.page_link("https://tw.stock.yahoo.com/", label="Yahoo股市", icon="💹")
 
 st.caption(f"Alpha-Refinery 漲停戰情室 2.0 | 版本：{datetime.now().strftime('%Y.%m.%d')} | 數據僅供參考，投資有風險")
+
 
 
 
