@@ -426,43 +426,39 @@ if not df_limit_ups.empty:
         )
     
     with col_a4:
-        # Gemini內建分析（密碼保護）
         if st.session_state.gemini_authorized:
             if st.button("🤖 Gemini 分析", use_container_width=True, type="primary"):
                 with st.spinner("Gemini正在分析中..."):
                     ai_response = call_ai_safely(enhanced_prompt)
                     if ai_response:
-            
+                        # 移出 column，直接整行顯示
+                        st.markdown("")  # 空行分隔
                         st.markdown("### 🤖 Gemini 強勢股分析報告")
                         st.markdown("---")
                         
-                        # 關鍵修正：用 st.container + CSS 強制換行 + 好看外框
-                        with st.container():
-                            st.markdown(
-                                f"""
-                                <div style="
-                                    background-color: #f8f9fa !important;
-                                    padding: 25px !important;
-                                    border-radius: 15px !important;
-                                    border-left: 6px solid #28a745 !important;
-                                    box-shadow: 0 4px 12px rgba(0,0,0,0.08) !important;
-                                    line-height: 1.9 !important;
-                                    font-size: 16px !important;
-                                    white-space: pre-wrap !important;
-                                    word-wrap: break-word !important;
-                                    overflow-wrap: break-word !important;
-                                    max-width: 100% !important;
-                                    width: 100% !important;
-                                    overflow-x: auto !important;
-                                    box-sizing: border-box !important;
-                                ">
-                                {ai_response.replace('\n', '<br>')}
-                                </div>
-                                """,
-                                unsafe_allow_html=True
-                            )
+                        st.markdown(
+                            f"""
+                            <div style="
+                                background-color: #f8f9fa !important;
+                                padding: 30px !important;
+                                border-radius: 15px !important;
+                                border-left: 6px solid #28a745 !important;
+                                box-shadow: 0 6px 16px rgba(0,0,0,0.1) !important;
+                                line-height: 2 !important;
+                                font-size: 17px !important;
+                                white-space: pre-wrap !important;
+                                word-wrap: break-word !important;
+                                max-width: 100% !important;
+                                width: 100% !important;
+                                box-sizing: border-box !important;
+                                margin: 20px 0 !important;
+                            ">
+                            {ai_response.replace('\n', '<br>')}
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
                         
-                        # 提供下載報告（保持原樣）
                         report_text = f"# 今日強勢股分析報告\n\n日期：{today}\n\n{ai_response}"
                         st.download_button(
                             label="📥 下載分析報告 (.md)",
@@ -471,8 +467,8 @@ if not df_limit_ups.empty:
                             mime="text/markdown",
                             use_container_width=True
                         )
-
         else:
+            # 原本的鎖定提示
             st.markdown('<div class="password-protected">', unsafe_allow_html=True)
             st.info("🔒 Gemini 需要授權解鎖")
             auth_pw = st.text_input("授權密碼：", type="password", key="strong_stocks_pw")
@@ -744,6 +740,7 @@ with col_tool4:
     st.page_link("https://tw.stock.yahoo.com/", label="Yahoo股市", icon="💹")
 
 st.caption(f"Alpha-Refinery 漲停戰情室 2.0 | 版本：{datetime.now().strftime('%Y.%m.%d')} | 數據僅供參考，投資有風險")
+
 
 
 
