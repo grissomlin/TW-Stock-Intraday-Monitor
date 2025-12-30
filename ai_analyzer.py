@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-AI 分析核心模組 - GitHub Actions 版本
+AI 分析核心模組 - 修正版
 """
 import os
 import sys
@@ -39,6 +39,8 @@ except ImportError:
         @staticmethod
         def get_market_summary_prompt(all_stocks, sector_distribution, market_indicators):
             return f"分析市場總結: 共{len(all_stocks)}檔漲停"
+    
+    StockPrompts = SimplePrompts
 
 class StockAIAnalyzer:
     """股票AI分析器"""
@@ -57,12 +59,12 @@ class StockAIAnalyzer:
         try:
             genai.configure(api_key=api_key)
             
-            # 嘗試不同的模型名稱
+            # 嘗試不同的模型名稱（修正API版本問題）
             model_names = [
-                'gemini-1.5-flash',
-                'models/gemini-1.5-flash',
-                'gemini-1.5-flash-latest',
-                'gemini-pro'
+                'gemini-1.5-flash-latest',  # 最新版本
+                'gemini-1.5-flash',         # 一般版本
+                'gemini-1.5-pro-latest',    # Pro版本
+                'gemini-1.0-pro'            # 舊版
             ]
             
             self.model = None
@@ -84,14 +86,71 @@ class StockAIAnalyzer:
     
     def is_available(self):
         """檢查AI分析器是否可用"""
-        return self.model is not None
+        return self.model is not None and GEMINI_AVAILABLE
     
-    # ... 其餘的方法保持不變
+    def get_consecutive_limit_up_days(self, symbol: str) -> Dict:
+        """
+        查詢連續漲停天數（ai_analyzer版本）
+        返回：{'consecutive_days': int, 'recent_history': List}
+        """
+        if not self.supabase:
+            return {'consecutive_days': 1, 'recent_history': []}
+        
+        try:
+            # 查詢最近5天的記錄
+            today = datetime.now().strftime("%Y-%m-%d")
+            five_days_ago = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
+            
+            response = self.supabase.table("individual_stock_analysis")\
+                .select("*")\
+                .eq("symbol", symbol)\
+                .gte("analysis_date", five_days_ago)\
+                .lte("analysis_date", today)\
+                .order("analysis_date", desc=True)\
+                .execute()
+            
+            if not response.data:
+                return {'consecutive_days': 1, 'recent_history': []}
+            
+            # 找出連續漲停天數
+            consecutive_days = 0
+            recent_history = []
+            
+            for record in response.data:
+                return_rate = record.get('return_rate')
+                is_rotc = record.get('is_rotc', False)
+                threshold = 0.10 if is_rotc else 0.098
+                
+                # 檢查 return_rate 是否為 None
+                if return_rate is None:
+                    break
+                
+                if float(return_rate) >= threshold:
+                    consecutive_days += 1
+                    recent_history.append({
+                        'date': record['analysis_date'],
+                        'return': return_rate
+                    })
+                else:
+                    break
+            
+            return {
+                'consecutive_days': consecutive_days or 1,
+                'recent_history': recent_history[:3]  # 最近3天
+            }
+            
+        except Exception as e:
+            print(f"查詢連續漲停失敗 {symbol}: {e}")
+            return {'consecutive_days': 1, 'recent_history': []}
+    
     def analyze_individual_stock(self, stock_info: Dict) -> Optional[str]:
         """
         分析單一漲停股票
         Returns: AI分析結果
         """
+        if not self.is_available():
+            return None
+            
         symbol = stock_info['symbol']
         
         # 檢查快取
@@ -99,16 +158,37 @@ class StockAIAnalyzer:
         if cache_key in self.analyzed_cache:
             return self.analyzed_cache[cache_key]
         
-        # 獲取連續漲停資訊
-        consecutive_info = self.get_consecutive_limit_up_days(symbol)
-        stock_info['consecutive_days'] = consecutive_info['consecutive_days']
+        # 獲取連續漲停資訊（如果沒有提供）
+        if 'consecutive_days' not in stock_info:
+            consecutive_info = self.get_consecutive_limit_up_days(symbol)
+            stock_info['consecutive_days'] = consecutive_info['consecutive_days']
+        else:
+            # 使用外部提供的連續天數
+            consecutive_info = {
+                'consecutive_days': stock_info['consecutive_days'],
+                'recent_history': []
+            }
         
         # 生成提示詞
-        prompt = StockPrompts.get_individual_stock_prompt(
-            stock_info, 
-            consecutive_info['consecutive_days'],
-            consecutive_info['recent_history']
-        )
+        if PROMPTS_AVAILABLE:
+            prompt = StockPrompts.get_individual_stock_prompt(
+                stock_info, 
+                consecutive_info['consecutive_days'],
+                consecutive_info['recent_history']
+            )
+        else:
+            # 預設提示詞
+            prompt = f"""
+            請分析以下漲停股票：
+            股票名稱：{stock_info.get('name', 'N/A')}
+            股票代碼：{stock_info.get('symbol', 'N/A')}
+            產業：{stock_info.get('sector', '未分類')}
+            價格：{stock_info.get('price', 'N/A')}
+            漲幅：{stock_info.get('return', 0):.2%}
+            連續漲停天數：{stock_info.get('consecutive_days', 1)}
+            
+            請提供技術面、基本面、風險評估和操作建議。
+            """
         
         # 呼叫AI
         try:
@@ -124,7 +204,7 @@ class StockAIAnalyzer:
             return analysis
             
         except Exception as e:
-            print(f"AI分析失敗 {symbol}: {e}")
+            print(f"AI分析失敗 {symbol}: {str(e)[:100]}")
             return None
     
     def analyze_sector(self, sector_name: str, stocks_in_sector: List[Dict]) -> Optional[str]:
@@ -132,6 +212,9 @@ class StockAIAnalyzer:
         分析產業趨勢
         Returns: AI產業分析結果
         """
+        if not self.is_available():
+            return None
+            
         if len(stocks_in_sector) <= 1:
             return None  # 只有一家漲停，略過產業分析
         
@@ -141,14 +224,34 @@ class StockAIAnalyzer:
             return self.analyzed_cache[cache_key]
         
         # 獲取市場環境（簡化）
-        market_context = "今日大盤上漲/下跌，成交量..."  # 可從外部傳入
+        market_context = "今日大盤..."
         
         # 生成提示詞
-        prompt = StockPrompts.get_sector_analysis_prompt(
-            sector_name, 
-            stocks_in_sector,
-            market_context
-        )
+        if PROMPTS_AVAILABLE:
+            prompt = StockPrompts.get_sector_analysis_prompt(
+                sector_name, 
+                stocks_in_sector,
+                market_context
+            )
+        else:
+            # 預設提示詞
+            stocks_info = "\n".join([
+                f"{i+1}. {stock['name']}({stock['symbol']}) - 漲幅:{stock.get('return',0):.2%}"
+                for i, stock in enumerate(stocks_in_sector)
+            ])
+            prompt = f"""
+            請分析以下產業的集體漲停現象：
+            產業名稱：{sector_name}
+            漲停家數：{len(stocks_in_sector)}家
+            
+            漲停股票明細：
+            {stocks_info}
+            
+            請分析：
+            1. 是否形成產業趨勢
+            2. 可能的催化劑
+            3. 投資建議
+            """
         
         # 呼叫AI
         try:
@@ -164,7 +267,7 @@ class StockAIAnalyzer:
             return analysis
             
         except Exception as e:
-            print(f"產業AI分析失敗 {sector_name}: {e}")
+            print(f"產業AI分析失敗 {sector_name}: {str(e)[:100]}")
             return None
     
     def analyze_market_summary(self, all_stocks: List[Dict]) -> Optional[str]:
@@ -172,6 +275,9 @@ class StockAIAnalyzer:
         分析整體市場
         Returns: AI市場總結
         """
+        if not self.is_available():
+            return None
+            
         # 統計產業分布
         sector_distribution = {}
         for stock in all_stocks:
@@ -181,22 +287,38 @@ class StockAIAnalyzer:
         # 市場指標（可擴充）
         market_indicators = {
             'temperature': '熱絡' if len(all_stocks) > 20 else '溫和',
-            'volume': '放大'  # 實際可從外部獲取
+            'volume': '一般'
         }
         
         # 生成提示詞
-        prompt = StockPrompts.get_market_summary_prompt(
-            all_stocks,
-            sector_distribution,
-            market_indicators
-        )
+        if PROMPTS_AVAILABLE:
+            prompt = StockPrompts.get_market_summary_prompt(
+                all_stocks,
+                sector_distribution,
+                market_indicators
+            )
+        else:
+            # 預設提示詞
+            sector_text = "\n".join([
+                f"- {sector}: {count}家" 
+                for sector, count in sector_distribution.items()
+            ])
+            prompt = f"""
+            請分析今日台股市場整體狀況：
+            
+            總漲停家數：{len(all_stocks)}
+            產業分布：
+            {sector_text}
+            
+            請分析市場情緒、資金流向、風險評估和明日展望。
+            """
         
         # 呼叫AI
         try:
             response = self.model.generate_content(prompt)
             return response.text
         except Exception as e:
-            print(f"市場AI分析失敗: {e}")
+            print(f"市場AI分析失敗: {str(e)[:100]}")
             return None
     
     def _update_stock_analysis(self, symbol: str, ai_comment: str):
