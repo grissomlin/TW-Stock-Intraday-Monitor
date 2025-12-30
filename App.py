@@ -244,8 +244,6 @@ if not supabase:
 # --- 區塊一：大盤總結與AI提示詞生成 ---
 with st.expander("📊 今日大盤 AI 總結與分析", expanded=True):
     summary_df = fetch_today_data("daily_market_summary", today)
-    st.write("正在查詢的大盤總結日期：", today)
-    st.write("日期類型：", type(today), "長度：", len(today))
     if not summary_df.empty:
         summary_content = summary_df.iloc[0]['summary_content']
         st.info(summary_content)
@@ -754,5 +752,6 @@ with col_tool4:
     st.page_link("https://tw.stock.yahoo.com/", label="Yahoo股市", icon="💹")
 
 st.caption(f"Alpha-Refinery 漲停戰情室 2.0 | 版本：{datetime.now().strftime('%Y.%m.%d')} | 數據僅供參考，投資有風險")
+
 
 
