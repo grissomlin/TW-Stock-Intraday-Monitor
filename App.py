@@ -432,18 +432,41 @@ if not df_limit_ups.empty:
                 with st.spinner("Gemini正在分析中..."):
                     ai_response = call_ai_safely(enhanced_prompt)
                     if ai_response:
+            
                         st.markdown("### 🤖 Gemini 強勢股分析報告")
                         st.markdown("---")
-                        st.markdown(ai_response)
                         
-                        # 提供下載報告
+                        # 關鍵修正：用 st.container + CSS 強制換行 + 好看外框
+                        with st.container():
+                            st.markdown(
+                                f"""
+                                <div style="
+                                    background-color: #f8f9fa;
+                                    padding: 20px;
+                                    border-radius: 12px;
+                                    border-left: 5px solid #28a745;
+                                    line-height: 1.8;
+                                    white-space: pre-wrap;
+                                    word-wrap: break-word;
+                                    max-width: 100%;
+                                    overflow-x: hidden;
+                                ">
+                                {ai_response}
+                                </div>
+                                """,
+                                unsafe_allow_html=True
+                            )
+                        
+                        # 提供下載報告（保持原樣）
                         report_text = f"# 今日強勢股分析報告\n\n日期：{today}\n\n{ai_response}"
                         st.download_button(
-                            label="📥 下載分析報告",
+                            label="📥 下載分析報告 (.md)",
                             data=report_text.encode('utf-8'),
                             file_name=f"strong_stocks_analysis_{today}.md",
-                            mime="text/markdown"
+                            mime="text/markdown",
+                            use_container_width=True
                         )
+
         else:
             st.markdown('<div class="password-protected">', unsafe_allow_html=True)
             st.info("🔒 Gemini 需要授權解鎖")
@@ -716,6 +739,7 @@ with col_tool4:
     st.page_link("https://tw.stock.yahoo.com/", label="Yahoo股市", icon="💹")
 
 st.caption(f"Alpha-Refinery 漲停戰情室 2.0 | 版本：{datetime.now().strftime('%Y.%m.%d')} | 數據僅供參考，投資有風險")
+
 
 
 
