@@ -537,26 +537,43 @@ def run_monitor():
     log(f"掃描完成，發現 {found_count} 檔漲停股票")
     
     # ========== AI分析階段 ==========
-    if limit_up_stocks and ai_analyzer:
+    if limit_up_stocks and ai_analyzer and ai_analyzer.is_available():
         log("🤖 開始AI分析階段...")
         
         # 1. 計算連續漲停天數
         log("📅 計算連續漲停天數...")
         for stock in limit_up_stocks:
-            stock['consecutive_days'] = get_consecutive_limit_up_days(stock['symbol'])
+            try:
+                consecutive_days = get_consecutive_limit_up_days(stock['symbol'])
+                stock['consecutive_days'] = consecutive_days
+            except Exception as e:
+                log(f"計算連續漲停天數失敗 {stock['symbol']}: {e}")
+                stock['consecutive_days'] = 1
         
         # 2. 個股AI分析
         log("🧠 進行個股AI分析...")
+        analyzed_stocks = []
         for stock in tqdm(limit_up_stocks, desc="個股AI分析"):
             try:
-                ai_comment = ai_analyzer.analyze_individual_stock(stock)
-                if ai_comment:
-                    stock['ai_comment'] = ai_comment
-                    save_stock_with_analysis(stock)
-                    update_consecutive_limit_up(stock)
-                time.sleep(0.5)  # 避免API限制
+                # 先檢查股票是否已經有AI分析（避免重複）
+                if not stock.get('ai_comment'):
+                    ai_comment = ai_analyzer.analyze_individual_stock(stock)
+                    if ai_comment:
+                        stock['ai_comment'] = ai_comment
+                        analyzed_stocks.append(stock)
+                        
+                        # 儲存到資料庫
+                        save_stock_with_analysis(stock)
+                        
+                        # 更新連續漲停追蹤
+                        update_consecutive_limit_up(stock)
+                
+                # 避免API限制，每分析一支股票等待0.5秒
+                time.sleep(0.5)
+                
             except Exception as e:
                 log(f"個股AI分析失敗 {stock['symbol']}: {e}")
+                continue
         
         # 3. 產業AI分析
         log("🏭 進行產業AI分析...")
@@ -575,7 +592,10 @@ def run_monitor():
                     if analysis:
                         sector_analyses[sector] = analysis
                         save_sector_analysis(sector, stocks_in_sector, analysis)
+                    
+                    # 避免API限制
                     time.sleep(0.5)
+                    
                 except Exception as e:
                     log(f"產業AI分析失敗 {sector}: {e}")
         
@@ -597,13 +617,18 @@ def run_monitor():
                 safe_data = {
                     "analysis_date": today_str,
                     "stock_count": total_stocks,
-                    "summary_content": market_summary[:5000],  # 限制長度
+                    "summary_content": market_summary[:5000],
                     "stock_list": ", ".join([s['name'] + '(' + s['symbol'] + ')' for s in limit_up_stocks]) if limit_up_stocks else "無",
                     "created_at": datetime.now().isoformat()
                 }
                 supabase.table("daily_market_summary").upsert(safe_data).execute()
             except Exception as e:
                 log(f"更新市場總結失敗: {e}")
+    else:
+        if limit_up_stocks:
+            log("⚠️ AI分析器不可用，跳過AI分析階段")
+            # 只發送基本通知
+            send_basic_notification(limit_up_stocks)
     
     # 計算執行時間
     elapsed_time = time.time() - start_time
@@ -665,6 +690,7 @@ if __name__ == "__main__":
     except Exception as e:
         log(f"❌ 程式執行錯誤: {e}")
         send_telegram_msg(f"❌ *程式執行錯誤*\n錯誤訊息: {str(e)[:100]}")
+
 
 
 
