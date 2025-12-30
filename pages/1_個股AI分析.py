@@ -45,14 +45,33 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ========== 導入共享功能 ==========
-# 添加父目錄到路徑
+import sys
+import os
+
+# 添加父目錄到路徑，讓 Python 能找到 utils 包
 current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, current_dir)
+parent_dir = os.path.dirname(current_dir)  # 專案根目錄
+
+# 將專案根目錄添加到路徑
+sys.path.insert(0, parent_dir)
 
 try:
-    from utils.common import init_connections, fetch_today_data, get_stock_links
+    # 從 utils 包導入
+    from utils import (
+        init_connections, 
+        fetch_today_data, 
+        get_stock_links,
+        get_wantgoo_url,
+        get_goodinfo_url,
+        get_cnyes_url,
+        call_ai_safely
+    )
 except ImportError as e:
     st.error(f"導入共享功能失敗: {e}")
+    # 除錯訊息
+    st.error(f"當前工作目錄: {os.getcwd()}")
+    st.error(f"Python 路徑: {sys.path}")
+    st.error(f"目錄內容: {os.listdir(parent_dir)}")
     st.stop()
 
 # 初始化連線
