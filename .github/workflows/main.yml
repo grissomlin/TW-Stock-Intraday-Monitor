@@ -1,26 +1,162 @@
 name: Intra-day Stock Monitor
 
 on:
+  # 原來的觸發條件（保持不變）
   schedule:
     # 台灣時間 09:30, 10:30, 11:30, 12:30, 13:30 執行
     # 分鐘設為 30，小時設為 1, 2, 3, 4, 5 (UTC)
     - cron: '30 1,2,3,4,5 * * 1-5'
   workflow_dispatch: # 保留手動按鈕
+  # 可選：當程式碼更新時也執行
+  push:
+    branches: [ main ]
+    paths:
+      - '**.py'
+      - 'requirements.txt'
+      - '.github/workflows/**'
 
 jobs:
   run-monitor:
     runs-on: ubuntu-latest
+    
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    
     steps:
-      - uses: actions/checkout@v3
-      - name: Set up Python
+      - name: 檢查倉庫
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+        
+      - name: 設定 Python 環境
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-      - name: Run Script
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python main_pipeline.py
+          cache: 'pip'
+          
+      - name: 檢查檔案結構
+        run: |
+          echo "📁 檔案結構:"
+          ls -la
+          echo -e "\n📂 子目錄:"
+          find . -name "*.py" -o -name "requirements.txt" | head -20
+          echo -e "\n📝 Python 模組:"
+          python -c "import sys; print('Python路徑:', sys.path)"
+        
+      - name: 安裝依賴套件
+        run: |
+          python -m pip install --upgrade pip
+          pip install --no-cache-dir -r requirements.txt
+          
+          # 額外檢查關鍵套件
+          echo "🔍 檢查關鍵套件版本:"
+          python -c "
+          try:
+              import pandas as pd
+              print(f'✅ pandas: {pd.__version__}')
+          except Exception as e:
+              print(f'❌ pandas: {e}')
+          
+          try:
+              import google.generativeai as genai
+              print(f'✅ google.generativeai: 已安裝')
+          except Exception as e:
+              print(f'❌ google.generativeai: {e}')
+          
+          try:
+              from supabase import create_client
+              print(f'✅ supabase: 已安裝')
+          except Exception as e:
+              print(f'❌ supabase: {e}')
+          "
+        
+      - name: 設置環境變數 (測試用)
+        run: |
+          echo "🔧 檢查環境變數:"
+          echo "SUPABASE_URL: ${#SUPABASE_URL} 字元"
+          echo "SUPABASE_KEY: ${#SUPABASE_KEY} 字元"
+          echo "TELEGRAM_BOT_TOKEN: ${#TELEGRAM_BOT_TOKEN} 字元"
+          echo "TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}"
+          echo "GEMINI_API_KEY: ${#GEMINI_API_KEY} 字元"
+          
+          # 創建臨時的 .env 檔案（僅供測試）
+          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_KEY" ]; then
+            echo "✅ 環境變數已設置"
+          else
+            echo "⚠️ 部分環境變數未設置"
+          fi
+        
+      - name: 測試模組導入
+        run: |
+          echo "🧪 測試模組導入..."
+          python -c "
+          import sys
+          import os
+          
+          # 確保當前目錄在 Python 路徑中
+          current_dir = os.path.dirname(os.path.abspath('.'))
+          if current_dir not in sys.path:
+              sys.path.insert(0, current_dir)
+          
+          print('Python 版本:', sys.version)
+          print('當前目錄:', os.getcwd())
+          
+          # 測試基本模組
+          modules_to_test = ['pandas', 'yfinance', 'requests', 'google.generativeai', 'supabase']
+          
+          for module in modules_to_test:
+              try:
+                  __import__(module)
+                  print(f'✅ {module}: 導入成功')
+              except ImportError as e:
+                  print(f'❌ {module}: 導入失敗 - {e}')
+          
+          # 測試自訂模組
+          print('\n測試自訂模組:')
+          try:
+              from ai_analyzer import StockAIAnalyzer
+              print('✅ ai_analyzer: 導入成功')
+          except ImportError as e:
+              print(f'❌ ai_analyzer: 導入失敗 - {e}')
+          
+          try:
+              from prompts import StockPrompts
+              print('✅ prompts: 導入成功')
+          except ImportError as e:
+              print(f'❌ prompts: 導入失敗 - {e}')
+          "
+        
+      - name: 執行主程式
+        run: |
+          echo "🚀 開始執行股票監控..."
+          
+          # 設置時區為台灣時間（可選）
+          export TZ='Asia/Taipei'
+          
+          # 執行主程式
+          python main_pipeline.py
+          
+          # 檢查執行結果
+          if [ $? -eq 0 ]; then
+            echo "✅ 程式執行成功"
+          else
+            echo "❌ 程式執行失敗"
+            exit 1
+          fi
+        
+      - name: 清理緩存（可選）
+        if: always()
+        run: |
+          echo "🧹 清理緩存..."
+          pip cache purge || true
+        
+      - name: 執行完成通知（可選）
+        if: always()
+        run: |
+          echo "🏁 工作流程執行完成"
+          date
+          echo "GitHub Actions 運行時間: ${{ github.run_id }}"
