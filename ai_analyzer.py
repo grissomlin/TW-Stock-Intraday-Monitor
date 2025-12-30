@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-AI 分析核心模組 - 修正版
+AI 分析核心模組 - 修正版（參考 Streamlit 成功版本）
 """
 import os
 import sys
@@ -46,7 +46,7 @@ class StockAIAnalyzer:
     """股票AI分析器"""
     
     def __init__(self, api_key: str, supabase_client=None):
-        """初始化AI分析器"""
+        """初始化AI分析器 - 參考 Streamlit 的成功設定"""
         self.supabase = supabase_client
         self.analyzed_cache = {}
         
@@ -56,32 +56,55 @@ class StockAIAnalyzer:
             self.model = None
             return
         
+        if not api_key:
+            print("❌ Gemini API Key 未提供")
+            self.model = None
+            return
+        
         try:
+            # 配置 API 金鑰
             genai.configure(api_key=api_key)
             
-            # 嘗試不同的模型名稱（修正API版本問題）
-            model_names = [
-                'gemini-1.5-flash-latest',  # 最新版本
-                'gemini-1.5-flash',         # 一般版本
-                'gemini-1.5-pro-latest',    # Pro版本
-                'gemini-1.0-pro'            # 舊版
+            # ========== 關鍵修正：使用 Streamlit 的成功方法 ==========
+            # 列出所有可用模型
+            available_models = []
+            try:
+                available_models = [m.name for m in genai.list_models() 
+                                  if 'generateContent' in m.supported_generation_methods]
+                print(f"✅ 可用模型: {len(available_models)} 個")
+            except Exception as e:
+                print(f"⚠️ 無法獲取模型列表: {e}")
+            
+            # 候選模型列表（按照優先順序）
+            candidates = [
+                'models/gemini-1.5-flash',  # Streamlit 中使用的格式
+                'gemini-1.5-flash',         # 簡化格式
+                'models/gemini-1.5-pro',    # Pro 版本
+                'gemini-1.5-pro',
+                'gemini-pro',               # 舊版
+                'models/gemini-pro'
             ]
             
-            self.model = None
-            for model_name in model_names:
-                try:
-                    self.model = genai.GenerativeModel(model_name)
-                    print(f"✅ 使用模型: {model_name}")
+            # 選擇可用的模型
+            target_model = None
+            for candidate in candidates:
+                if candidate in available_models:
+                    target_model = candidate
                     break
-                except Exception as e:
-                    print(f"❌ 模型 {model_name} 不可用: {e}")
-                    continue
             
-            if self.model is None:
-                print("❌ 所有模型都不可用")
+            # 如果沒有匹配的候選模型，使用第一個可用模型
+            if not target_model and available_models:
+                target_model = available_models[0]
             
+            if target_model:
+                print(f"✅ 選擇模型: {target_model}")
+                self.model = genai.GenerativeModel(target_model)
+            else:
+                print("❌ 沒有可用的模型")
+                self.model = None
+                
         except Exception as e:
-            print(f"❌ AI分析器初始化失敗: {e}")
+            print(f"❌ AI分析器初始化失敗: {str(e)[:200]}")
             self.model = None
     
     def is_available(self):
@@ -90,7 +113,7 @@ class StockAIAnalyzer:
     
     def get_consecutive_limit_up_days(self, symbol: str) -> Dict:
         """
-        查詢連續漲停天數（ai_analyzer版本）
+        查詢連續漲停天數
         返回：{'consecutive_days': int, 'recent_history': List}
         """
         if not self.supabase:
@@ -125,13 +148,16 @@ class StockAIAnalyzer:
                 if return_rate is None:
                     break
                 
-                if float(return_rate) >= threshold:
-                    consecutive_days += 1
-                    recent_history.append({
-                        'date': record['analysis_date'],
-                        'return': return_rate
-                    })
-                else:
+                try:
+                    if float(return_rate) >= threshold:
+                        consecutive_days += 1
+                        recent_history.append({
+                            'date': record['analysis_date'],
+                            'return': return_rate
+                        })
+                    else:
+                        break
+                except (ValueError, TypeError):
                     break
             
             return {
