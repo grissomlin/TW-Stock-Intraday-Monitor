@@ -223,6 +223,14 @@ with st.sidebar:
         st.info("💡 請安裝 plotly 套件以啟用圖表功能：")
         st.code("pip install plotly")
 
+    st.divider()
+    st.subheader("🛠️ 除錯與維護工具")
+    
+    if st.button("🔄 強制清除所有快取並重新載入"):
+        st.cache_data.clear()        # 清除所有 @st.cache_data 快取
+        st.cache_resource.clear()    # 清除 @st.cache_resource 快取（包含 supabase 連線）
+        st.success("所有快取已清除！正在重新載入最新資料...")
+        st.rerun()
 # ========== 6. 主介面呈現 ==========
 
 st.title("🚀 Alpha-Refinery 漲停戰情室 2.0")
@@ -745,3 +753,4 @@ with col_tool4:
     st.page_link("https://tw.stock.yahoo.com/", label="Yahoo股市", icon="💹")
 
 st.caption(f"Alpha-Refinery 漲停戰情室 2.0 | 版本：{datetime.now().strftime('%Y.%m.%d')} | 數據僅供參考，投資有風險")
+
