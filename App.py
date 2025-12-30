@@ -281,44 +281,8 @@ with st.expander("📊 今日大盤 AI 總結與分析", expanded=True):
 
 請提供具體、可操作的投資建議。"""
         
-        col_m1, col_m2, col_m3 = st.columns(3)
-        
-        with col_m1:
-            # 一鍵帶入ChatGPT
-            encoded_market = urllib.parse.quote(market_prompt)
-            st.link_button(
-                "🔥 ChatGPT分析大盤",
-                f"https://chatgpt.com/?q={encoded_market}",
-                use_container_width=True,
-                help="自動在ChatGPT中打開大盤分析"
-            )
-        
-        with col_m2:
-            # 一鍵帶入DeepSeek
-            st.link_button(
-                "🔍 DeepSeek分析大盤",
-                "https://chat.deepseek.com/",
-                use_container_width=True,
-                help="請複製下方提示詞貼到DeepSeek"
-            )
-        
-        with col_m3:
-            # Gemini內建分析（密碼保護）
-            if st.session_state.gemini_authorized:
-                if st.button("🤖 Gemini分析大盤", use_container_width=True):
-                    ai_response = call_ai_safely(market_prompt)
-                    if ai_response:
-                        st.markdown("### 🤖 Gemini 大盤分析報告")
-                        st.markdown("---")
-                        st.markdown(ai_response)
-        
-        # 顯示提示詞供複製
-        with st.expander("📋 查看完整大盤分析提示詞"):
-            st.code(market_prompt, language="text")
-            
-    else:
-        st.warning(f"📅 尚未找到 {today} 的大盤分析記錄。")
-        st.info("💡 建議：可以手動分析今日漲停股票數據來判斷市場趨勢")
+       
+
 
 # --- 區塊二：強勢股偵測與AI提示詞 ---
 st.divider()
@@ -752,6 +716,7 @@ with col_tool4:
     st.page_link("https://tw.stock.yahoo.com/", label="Yahoo股市", icon="💹")
 
 st.caption(f"Alpha-Refinery 漲停戰情室 2.0 | 版本：{datetime.now().strftime('%Y.%m.%d')} | 數據僅供參考，投資有風險")
+
 
 
 
