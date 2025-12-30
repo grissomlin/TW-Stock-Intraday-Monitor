@@ -1,4 +1,4 @@
-# utils.py
+# utils/utils.py
 import streamlit as st
 from supabase import create_client
 import google.generativeai as genai
@@ -60,3 +60,21 @@ def get_stock_links(symbol):
         "cnyes": get_cnyes_url(symbol),
         "yahoo": f"https://tw.stock.yahoo.com/quote/{code}.TW"
     }
+
+def call_ai_safely(prompt, gemini_model):
+    """安全地調用 AI API"""
+    if not gemini_model:
+        st.error("AI 客戶端未啟動")
+        return None
+
+    try:
+        with st.spinner("🤖 AI 正在深度思考中..."):
+            res = gemini_model.generate_content(prompt)
+            return res.text
+    except Exception as e:
+        err_msg = str(e)
+        if "429" in err_msg or "ResourceExhausted" in err_msg:
+            st.error("⚠️ AI 額度已耗盡。請稍候 1 分鐘再試，或複製 Prompt 手動貼至 ChatGPT。")
+        else:
+            st.error(f"❌ AI 呼叫失敗: {e}")
+        return None
