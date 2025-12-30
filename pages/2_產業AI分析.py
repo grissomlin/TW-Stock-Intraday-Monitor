@@ -311,62 +311,8 @@ with col2:
         st.metric("最高連板", f"{max_lu}天")
 
 # ========== 市場整體AI分析 ==========
-st.divider()
-st.subheader("🌐 市場整體AI分析")
-
-# 自動生成市場整體分析提示詞 - 修改 to_markdown() 的使用
-def series_to_markdown_table(series, index_name='項目', value_name='數值'):
-    """將 Series 轉換為 markdown 表格字符串"""
-    df = series.reset_index()
-    df.columns = [index_name, value_name]
-    return df_to_markdown_table(df)
-
-# 處理產業分佈
-sector_distribution = df_to_markdown_table(sector_counts)
-
-# 處理連板天數分佈
-if 'consecutive_days' in df_limit_ups.columns:
-    consecutive_series = df_limit_ups['consecutive_days'].value_counts().sort_index()
-    # 將 Series 轉換為 DataFrame 再轉為 markdown
-    consecutive_df = consecutive_series.reset_index()
-    consecutive_df.columns = ['連板天數', '家數']
-    consecutive_distribution = df_to_markdown_table(consecutive_df)
-else:
-    consecutive_distribution = "| 連板天數 | 家數 |\n| --- | --- |\n| N/A | N/A |"
-
-market_summary = f"""
-## 台灣股市 今日漲停整體分析
-
-### 市場概況
-- 分析日期: {today}
-- 總漲停家數: {len(df_limit_ups)}家
-- 平均連板天數: {avg_lu:.1f}天
-- 最高連板: {max_lu}天
-
-### 產業分佈
-{sector_distribution}
-
-### 連板天數分佈
-{consecutive_distribution}
-
-### 市場分析問題
-1. **市場熱度評估**：從漲停家數看，當前市場處於什麼情緒週期？
-2. **產業輪動分析**：哪些產業是今日主流？是否有持續性？
-3. **連板效應**：連板股票的分佈顯示什麼市場結構？
-4. **風險提示**：市場過熱跡象有哪些？回調風險多高？
-5. **策略建議**：在當前市場環境下，最佳交易策略為何？
-
-請提供專業的市場分析與投資建議。"""
-
-with st.expander("📊 市場整體AI分析提示詞", expanded=False):
-    st.code(market_summary, language="text")
-    
-    encoded_market = urllib.parse.quote(market_summary)
-    st.link_button(
-        "🌐 分析整體市場情緒 (ChatGPT)",
-        f"https://chatgpt.com/?q={encoded_market}",
-        use_container_width=True
-    )
+# 此部分已移至專用頁面 pages/3_市場總覽AI分析.py
+# 如需市場整體分析，請使用該頁面
 
 # ========== 側邊欄設定 ==========
 with st.sidebar:
