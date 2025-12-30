@@ -245,7 +245,11 @@ def get_consecutive_limit_up_days(symbol):
         threshold = 0.098
         
         for record in sorted(response.data, key=lambda x: x['analysis_date'], reverse=True):
-            if record.get('return_rate', 0) >= (0.10 if record.get('is_rotc') else 0.098):
+            return_rate = record.get('return_rate')
+            if return_rate is None:
+                break
+            is_rotc = record.get('is_rotc', False)
+            if return_rate >= (0.10 if is_rotc else 0.098):
                 consecutive_days += 1
             else:
                 break
@@ -654,4 +658,5 @@ if __name__ == "__main__":
     except Exception as e:
         log(f"❌ 程式執行錯誤: {e}")
         send_telegram_msg(f"❌ *程式執行錯誤*\n錯誤訊息: {str(e)[:100]}")
+
 
