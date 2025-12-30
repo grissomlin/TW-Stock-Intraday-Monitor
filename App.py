@@ -441,17 +441,22 @@ if not df_limit_ups.empty:
                             st.markdown(
                                 f"""
                                 <div style="
-                                    background-color: #f8f9fa;
-                                    padding: 20px;
-                                    border-radius: 12px;
-                                    border-left: 5px solid #28a745;
-                                    line-height: 1.8;
-                                    white-space: pre-wrap;
-                                    word-wrap: break-word;
-                                    max-width: 100%;
-                                    overflow-x: hidden;
+                                    background-color: #f8f9fa !important;
+                                    padding: 25px !important;
+                                    border-radius: 15px !important;
+                                    border-left: 6px solid #28a745 !important;
+                                    box-shadow: 0 4px 12px rgba(0,0,0,0.08) !important;
+                                    line-height: 1.9 !important;
+                                    font-size: 16px !important;
+                                    white-space: pre-wrap !important;
+                                    word-wrap: break-word !important;
+                                    overflow-wrap: break-word !important;
+                                    max-width: 100% !important;
+                                    width: 100% !important;
+                                    overflow-x: auto !important;
+                                    box-sizing: border-box !important;
                                 ">
-                                {ai_response}
+                                {ai_response.replace('\n', '<br>')}
                                 </div>
                                 """,
                                 unsafe_allow_html=True
@@ -739,6 +744,7 @@ with col_tool4:
     st.page_link("https://tw.stock.yahoo.com/", label="Yahoo股市", icon="💹")
 
 st.caption(f"Alpha-Refinery 漲停戰情室 2.0 | 版本：{datetime.now().strftime('%Y.%m.%d')} | 數據僅供參考，投資有風險")
+
 
 
 
