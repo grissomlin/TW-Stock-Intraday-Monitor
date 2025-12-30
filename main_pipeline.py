@@ -1,61 +1,115 @@
 # -*- coding: utf-8 -*-
-import os, sys, requests, time, random
+import os, sys, requests, time, json
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import pandas as pd
 import yfinance as yf
 from io import StringIO
-from supabase import create_client
 import warnings
 from tqdm import tqdm
-import json
 
 # 忽略警告訊息
 warnings.filterwarnings('ignore')
 
-# 導入自訂模組
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# ========== 手動添加路徑 ==========
+# 在 GitHub Actions 中，需要明確添加當前目錄到 Python 路徑
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, current_dir)
+
+# 嘗試導入自訂模組
+AI_AVAILABLE = False
+ai_analyzer = None
+StockPrompts = None
+
 try:
     from ai_analyzer import StockAIAnalyzer
     from prompts import StockPrompts
     AI_AVAILABLE = True
-except ImportError:
-    AI_AVAILABLE = False
-    print("⚠️ AI模組未找到，將只進行基本掃描")
+    print("✅ AI模組導入成功")
+except ImportError as e:
+    print(f"⚠️ AI模組導入失敗: {e}")
+    print("嘗試重新導入...")
+    
+    # 嘗試另一種導入方式
+    try:
+        # 直接從當前目錄導入
+        import importlib.util
+        
+        # 導入 ai_analyzer
+        ai_analyzer_path = os.path.join(current_dir, "ai_analyzer.py")
+        spec = importlib.util.spec_from_file_location("ai_analyzer", ai_analyzer_path)
+        ai_analyzer_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ai_analyzer_module)
+        StockAIAnalyzer = ai_analyzer_module.StockAIAnalyzer
+        
+        # 導入 prompts
+        prompts_path = os.path.join(current_dir, "prompts.py")
+        spec = importlib.util.spec_from_file_location("prompts", prompts_path)
+        prompts_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(prompts_module)
+        StockPrompts = prompts_module.StockPrompts
+        
+        AI_AVAILABLE = True
+        print("✅ AI模組動態導入成功")
+    except Exception as e2:
+        print(f"❌ AI模組動態導入失敗: {e2}")
+        AI_AVAILABLE = False
 
+# ========== 載入環境變數 ==========
 load_dotenv()
 
-# ========== 1. 核心參數設定 ==========
+# 環境變數檢查
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 TG_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# 初始化 Supabase
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL else None
+print(f"🔧 環境變數檢查:")
+print(f"  SUPABASE_URL: {'已設置' if SUPABASE_URL else '未設置'}")
+print(f"  SUPABASE_KEY: {'已設置' if SUPABASE_KEY else '未設置'}")
+print(f"  TG_TOKEN: {'已設置' if TG_TOKEN else '未設置'}")
+print(f"  TG_CHAT_ID: {'已設置' if TG_CHAT_ID else '未設置'}")
+print(f"  GEMINI_API_KEY: {'已設置' if GEMINI_API_KEY else '未設置'}")
+print(f"  AI模組可用: {AI_AVAILABLE}")
 
-# 初始化AI分析器
-ai_analyzer = None
+# ========== 初始化 ==========
+from supabase import create_client
+
+# 初始化 Supabase
+supabase = None
+if SUPABASE_URL and SUPABASE_KEY:
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("✅ Supabase 初始化成功")
+    except Exception as e:
+        print(f"❌ Supabase 初始化失敗: {e}")
+else:
+    print("⚠️ Supabase 環境變數未設置")
+
+# 初始化 AI 分析器
 if AI_AVAILABLE and GEMINI_API_KEY and supabase:
     try:
         ai_analyzer = StockAIAnalyzer(GEMINI_API_KEY, supabase)
         print("✅ AI分析器初始化成功")
     except Exception as e:
-        print(f"⚠️ AI分析器初始化失敗: {e}")
+        print(f"❌ AI分析器初始化失敗: {e}")
         ai_analyzer = None
+else:
+    print("⚠️ AI分析器未初始化 (檢查: AI_AVAILABLE={AI_AVAILABLE}, GEMINI_API_KEY={'已設置' if GEMINI_API_KEY else '未設置'}, supabase={'已連接' if supabase else '未連接'})")
 
-# ========== 2. 日誌設定 ==========
+# ========== 日誌設定 ==========
 def log(msg: str, level="INFO"):
     """自定義日誌函數"""
     timestamp = datetime.now().strftime('%H:%M:%S')
     formatted_msg = f"{timestamp}: {msg}"
     print(formatted_msg, flush=True)
 
-# ========== 3. 功能模組 ==========
+# ========== 功能模組 ==========
 def send_telegram_msg(message):
     """發送訊息到 Telegram"""
     if not TG_TOKEN or not TG_CHAT_ID:
+        log("⚠️ Telegram 憑證未設置")
         return
     
     url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
@@ -68,10 +122,13 @@ def send_telegram_msg(message):
     
     try:
         response = requests.post(url, json=payload, timeout=10)
-        if response.status_code != 200:
+        if response.status_code == 200:
+            log(f"Telegram 訊息發送成功")
+        else:
             log(f"Telegram 發送失敗: {response.status_code}")
     except Exception as e:
         log(f"Telegram 發送錯誤: {e}")
+
 
 def get_taiwan_stock_list():
     """獲取台灣完整股票清單"""
@@ -597,3 +654,4 @@ if __name__ == "__main__":
     except Exception as e:
         log(f"❌ 程式執行錯誤: {e}")
         send_telegram_msg(f"❌ *程式執行錯誤*\n錯誤訊息: {str(e)[:100]}")
+
