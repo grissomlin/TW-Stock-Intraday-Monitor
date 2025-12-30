@@ -8,3 +8,5 @@ python-dotenv
 plotly
 lxml
 google-genai
+tqdm
+
