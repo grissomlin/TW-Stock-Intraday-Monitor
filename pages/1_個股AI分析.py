@@ -1,31 +1,45 @@
 # -*- coding: utf-8 -*-
 """
-📈 個股AI分析頁面 - 一檔一檔股票詢問AI
+🚀 Alpha-Refinery 漲停戰情室 2.0 - 主頁面
 """
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import sys
 import os
-import urllib.parse
 
 # 設定頁面配置
 st.set_page_config(
-    page_title="個股AI分析 | Alpha-Refinery",
+    page_title="Alpha-Refinery 漲停戰情室 2.0",
     layout="wide",
-    page_icon="📈"
+    page_icon="🚀"
 )
 
-# 添加自訂CSS
+# 自訂CSS樣式
 st.markdown("""
     <style>
-    .stock-selector { border: 2px solid #4CAF50; border-radius: 10px; padding: 20px; margin-bottom: 20px; }
-    .ai-response-box { 
-        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-        padding: 25px;
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; border: 1px solid #f0f2f6; box-shadow: 2px 2px 5px rgba(0,0,0,0.05); }
+    .ai-section { background-color: #fff3cd; padding: 15px; border-radius: 8px; border-left: 5px solid #ffc107; }
+    .stock-card { border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; margin: 8px 0; background: linear-gradient(135deg, #f5f7fa 0%, #e4edf5 100%); }
+    .password-protected { border: 2px solid #ff6b6b; border-radius: 8px; padding: 15px; background-color: #fff5f5; }
+    .welcome-header { 
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 3rem 2rem;
         border-radius: 15px;
-        border-left: 8px solid #4CAF50;
-        margin: 20px 0;
+        color: white;
+        margin-bottom: 2rem;
+        text-align: center;
+    }
+    .feature-card {
+        background: white;
+        border-radius: 10px;
+        padding: 1.5rem;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        transition: transform 0.3s;
+        height: 100%;
+    }
+    .feature-card:hover {
+        transform: translateY(-5px);
     }
     </style>
 """, unsafe_allow_html=True)
@@ -33,14 +47,10 @@ st.markdown("""
 # ========== 導入共享功能 ==========
 # 添加父目錄到路徑
 current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-sys.path.insert(0, parent_dir)
+sys.path.insert(0, current_dir)
 
 try:
-    from utils.common import (
-        init_connections, fetch_today_data, get_stock_links,
-        call_ai_safely, create_individual_stock_prompt
-    )
+    from utils.common import init_connections, fetch_today_data, get_stock_links
 except ImportError as e:
     st.error(f"導入共享功能失敗: {e}")
     st.stop()
@@ -49,237 +59,196 @@ except ImportError as e:
 supabase, gemini_model = init_connections()
 today = datetime.now().strftime("%Y-%m-%d")
 
-# ========== 頁面標題 ==========
-st.title("📈 個股AI分析")
-st.caption("選擇今日漲停股票，進行深度AI分析")
+# ========== 主頁面內容 ==========
+# 歡迎區塊
+st.markdown(f"""
+    <div class="welcome-header">
+        <h1 style="font-size: 3rem; margin-bottom: 1rem;">🚀 Alpha-Refinery 漲停戰情室 2.0</h1>
+        <p style="font-size: 1.2rem; opacity: 0.9;">智能漲停板分析系統 | 即時監控 | AI決策支援</p>
+        <p style="font-size: 1rem; opacity: 0.8;">📅 分析日期：{today} | 🕐 最後更新：{datetime.now().strftime('%H:%M:%S')}</p>
+    </div>
+""", unsafe_allow_html=True)
 
-# 檢查連線
-if not supabase:
-    st.error("❌ 資料庫連線失敗，請檢查設定")
-    st.stop()
+# 系統狀態區塊
+st.subheader("🔧 系統狀態")
+col1, col2, col3, col4 = st.columns(4)
 
-# ========== 載入今日漲停股票數據 ==========
-df_limit_ups = fetch_today_data(supabase, "individual_stock_analysis", today)
+with col1:
+    st.metric("資料庫連線", "✅" if supabase else "❌")
 
-if df_limit_ups.empty:
-    st.info("📊 今日尚未有漲停股票數據，請稍後再試。")
-    
-    # 顯示最近可用的日期
-    try:
-        res = supabase.table("individual_stock_analysis")\
-            .select("analysis_date")\
-            .order("analysis_date", desc=True)\
-            .limit(1)\
-            .execute()
-        
-        if res.data:
-            last_date = res.data[0]['analysis_date']
-            st.info(f"最近可用的分析日期：{last_date}")
-            if st.button("載入最近日期的數據"):
-                df_limit_ups = fetch_today_data(supabase, "individual_stock_analysis", last_date)
-                st.rerun()
-    except:
-        pass
-    
-    st.stop()
+with col2:
+    st.metric("AI 模型", "✅" if gemini_model else "❌")
 
-# ========== 股票選擇器 ==========
-st.markdown('<div class="stock-selector">', unsafe_allow_html=True)
-st.subheader("🔍 選擇分析標的")
-
-# 創建選擇列表
-stock_options = []
-for _, row in df_limit_ups.iterrows():
-    display_text = f"{row['stock_name']} ({row['symbol']}) - {row['sector']}"
-    
-    # 添加連板天數資訊
-    if 'consecutive_days' in row:
-        days = row['consecutive_days']
-        if days > 1:
-            display_text += f" 🔥 {days}連板"
-    
-    stock_options.append({
-        'display': display_text,
-        'symbol': row['symbol'],
-        'name': row['stock_name'],
-        'data': row.to_dict()
-    })
-
-# 下拉選擇器
-selected_display = st.selectbox(
-    "選擇股票：",
-    options=[s['display'] for s in stock_options],
-    help="選擇您要分析的漲停板股票"
-)
-
-# 獲取選擇的股票數據
-selected_stock = None
-for stock in stock_options:
-    if stock['display'] == selected_display:
-        selected_stock = stock
-        break
-
-if selected_stock:
-    st.success(f"✅ 已選擇：{selected_stock['name']} ({selected_stock['symbol']})")
-st.markdown('</div>', unsafe_allow_html=True)
-
-# ========== 顯示股票詳細資訊 ==========
-if selected_stock:
-    stock_data = selected_stock['data']
-    
-    col_info1, col_info2, col_info3, col_info4 = st.columns(4)
-    
-    with col_info1:
-        st.metric("股票代碼", selected_stock['symbol'])
-    
-    with col_info2:
-        return_rate = stock_data.get('return_rate', 0)
-        st.metric("今日漲幅", f"{return_rate:.2%}" if isinstance(return_rate, (int, float)) else "N/A")
-    
-    with col_info3:
-        price = stock_data.get('price', 0)
-        st.metric("當前價格", f"{price:.2f}" if isinstance(price, (int, float)) else "N/A")
-    
-    with col_info4:
-        consecutive_days = stock_data.get('consecutive_days', 1)
-        st.metric("連續漲停", f"{consecutive_days}天")
-    
-    # 產業資訊
-    st.write(f"**產業類別：** {stock_data.get('sector', '未分類')}")
-    if 'is_rotc' in stock_data:
-        st.write(f"**市場類別：** {'興櫃' if stock_data.get('is_rotc') else '上市/上櫃'}")
-    
-    # 顯示連結
-    st.subheader("🔗 相關資源")
-    links = get_stock_links(selected_stock['symbol'])
-    
-    link_cols = st.columns(5)
-    with link_cols[0]:
-        st.link_button("📈 玩股網K線", links['玩股網'])
-    with link_cols[1]:
-        st.link_button("📊 Goodinfo財報", links['Goodinfo'])
-    with link_cols[2]:
-        st.link_button("📰 鉅亨網新聞", links['鉅亨網'])
-    with link_cols[3]:
-        st.link_button("💹 Yahoo股市", links['Yahoo股市'])
-    with link_cols[4]:
-        st.link_button("📋 財報狗分析", links['財報狗'])
-
-# ========== AI 分析區域 ==========
-st.divider()
-st.header("🤖 AI深度分析")
-
-if selected_stock and gemini_model:
-    # 檢查是否有AI密碼保護
-    if 'gemini_authorized' not in st.session_state:
-        st.session_state.gemini_authorized = False
-    
-    if not st.session_state.gemini_authorized:
-        st.markdown('<div class="password-protected">', unsafe_allow_html=True)
-        st.warning("🔒 AI分析需要授權解鎖")
-        
-        auth_col1, auth_col2 = st.columns([3, 1])
-        with auth_col1:
-            password_input = st.text_input("授權密碼：", type="password", key="stock_analysis_pw")
-        with auth_col2:
-            if st.button("解鎖 AI", use_container_width=True):
-                if password_input == st.secrets.get("AI_ASK_PASSWORD", "default_password"):
-                    st.session_state.gemini_authorized = True
-                    st.success("✅ 授權成功！")
-                    st.rerun()
-                else:
-                    st.error("❌ 密碼錯誤")
-        
-        st.markdown('</div>', unsafe_allow_html=True)
+with col3:
+    if supabase:
+        try:
+            df_limit = fetch_today_data(supabase, "individual_stock_analysis", today)
+            limit_count = len(df_limit) if not df_limit.empty else 0
+            st.metric("今日漲停", f"{limit_count}檔")
+        except Exception as e:
+            st.metric("今日漲停", "載入中...")
     else:
-        st.success("✅ Gemini API 已授權")
-        
-        # 創建提示詞
-        prompt = create_individual_stock_prompt(stock_data)
-        
-        # 顯示提示詞
-        with st.expander("📋 查看分析提示詞", expanded=False):
-            st.code(prompt, language="text", height=300)
-        
-        # 分析按鈕
-        col_btn1, col_btn2, col_btn3, col_btn4 = st.columns(4)
-        
-        with col_btn1:
-            encoded_prompt = urllib.parse.quote(prompt)
-            st.link_button("🔥 ChatGPT 分析", 
-                         f"https://chatgpt.com/?q={encoded_prompt}", 
-                         use_container_width=True)
-        
-        with col_btn2:
-            st.link_button("🔍 DeepSeek 分析", 
-                         "https://chat.deepseek.com/", 
-                         use_container_width=True)
-        
-        with col_btn3:
-            st.link_button("📘 Claude 分析", 
-                         "https://claude.ai/", 
-                         use_container_width=True)
-        
-        with col_btn4:
-            if st.button("🤖 Gemini 分析", 
-                        use_container_width=True, 
-                        type="primary",
-                        key="analyze_stock"):
-                
-                with st.spinner("🤖 AI正在深度分析中..."):
-                    ai_response = call_ai_safely(prompt, gemini_model)
-                    
-                    if ai_response:
-                        # 儲存到 session state
-                        st.session_state[f"ai_response_{selected_stock['symbol']}"] = ai_response
-                        st.rerun()
-        
-        # 顯示AI回應
-        response_key = f"ai_response_{selected_stock['symbol']}"
-        if response_key in st.session_state:
-            st.markdown('<div class="ai-response-box">', unsafe_allow_html=True)
-            st.subheader(f"🤖 {selected_stock['name']} AI分析報告")
-            
-            ai_response = st.session_state[response_key]
-            st.markdown(ai_response)
-            
-            # 下載按鈕
-            report_text = f"# {selected_stock['name']}({selected_stock['symbol']}) AI分析報告\n\n日期：{today}\n\n{ai_response}"
-            
-            col_dl1, col_dl2 = st.columns([3, 1])
-            with col_dl1:
-                st.download_button(
-                    label="📥 下載分析報告 (.md)",
-                    data=report_text.encode('utf-8'),
-                    file_name=f"{selected_stock['symbol']}_analysis_{today}.md",
-                    mime="text/markdown",
-                    use_container_width=True
-                )
-            with col_dl2:
-                if st.button("🗑️ 清除報告", type="secondary", use_container_width=True):
-                    del st.session_state[response_key]
-                    st.rerun()
-            
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        # 授權撤銷按鈕
-        st.divider()
-        if st.button("🔒 撤銷 AI 授權", type="secondary"):
-            st.session_state.gemini_authorized = False
-            st.rerun()
+        st.metric("今日漲停", "N/A")
 
-else:
-    if not gemini_model:
-        st.error("❌ AI模型未初始化，無法進行分析")
-    elif not selected_stock:
-        st.info("ℹ️ 請先選擇要分析的股票")
+with col4:
+    st.metric("更新時間", datetime.now().strftime("%H:%M"))
 
-# ========== 頁面底部 ==========
+# --- 今日大盤總結 ---
 st.divider()
-st.markdown("### 🔄 其他選項")
+st.header("📊 今日大盤總結")
 
-if st.button("🔄 重新載入數據", type="secondary"):
-    st.cache_data.clear()
-    st.rerun()
+if supabase:
+    summary_df = fetch_today_data(supabase, "daily_market_summary", today)
+    if not summary_df.empty:
+        summary_content = summary_df.iloc[0]['summary_content']
+        st.info(summary_content)
+    else:
+        st.warning(f"📅 尚未找到 {today} 的大盤總結記錄。")
+        st.info("💡 監控系統將於掃描完成後自動生成總結，請稍後刷新頁面。")
+else:
+    st.error("❌ 資料庫連線失敗，請檢查設定")
 
-st.caption(f"個股AI分析頁面 | 更新時間：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+# --- 功能介紹區塊 ---
+st.divider()
+st.header("🎯 系統功能")
+
+# 三個主要功能介紹
+col_f1, col_f2, col_f3 = st.columns(3)
+
+with col_f1:
+    st.markdown("""
+    <div class="feature-card">
+        <h3>📈 個股AI分析</h3>
+        <p><strong>一檔一檔深度分析</strong></p>
+        <ul style="padding-left: 1.2rem;">
+            <li>單一漲停股票技術分析</li>
+            <li>連板天數判斷</li>
+            <li>AI風險評估</li>
+            <li>操作建議生成</li>
+        </ul>
+        <p style="margin-top: 1rem;">
+            <a href="/1_個股AI分析" target="_self">
+                <button style="background-color: #4CAF50; color: white; padding: 8px 16px; border: none; border-radius: 5px; cursor: pointer;">
+                    進入分析 →
+                </button>
+            </a>
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col_f2:
+    st.markdown("""
+    <div class="feature-card">
+        <h3>🏭 產業AI分析</h3>
+        <p><strong>產業趨勢深度解析</strong></p>
+        <ul style="padding-left: 1.2rem;">
+            <li>產業漲停家數分析</li>
+            <li>資金流向判斷</li>
+            <li>龍頭股辨識</li>
+            <li>產業前景評估</li>
+        </ul>
+        <p style="margin-top: 1rem;">
+            <a href="/2_產業AI分析" target="_self">
+                <button style="background-color: #2196F3; color: white; padding: 8px 16px; border: none; border-radius: 5px; cursor: pointer;">
+                    進入分析 →
+                </button>
+            </a>
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col_f3:
+    st.markdown("""
+    <div class="feature-card">
+        <h3>🌐 市場總覽AI分析</h3>
+        <p><strong>整體市場全面解析</strong></p>
+        <ul style="padding-left: 1.2rem;">
+            <li>市場情緒分析</li>
+            <li>資金結構判斷</li>
+            <li>風險控管建議</li>
+            <li>明日策略規劃</li>
+        </ul>
+        <p style="margin-top: 1rem;">
+            <a href="/3_市場總覽AI分析" target="_self">
+                <button style="background-color: #9C27B0; color: white; padding: 8px 16px; border: none; border-radius: 5px; cursor: pointer;">
+                    進入分析 →
+                </button>
+            </a>
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+# --- 今日漲停板概覽 ---
+st.divider()
+st.header("🔥 今日漲停板概覽")
+
+if supabase:
+    df_limit_ups = fetch_today_data(supabase, "individual_stock_analysis", today)
+    
+    if not df_limit_ups.empty:
+        # 顯示前10檔漲停股票
+        display_cols = ['stock_name', 'symbol', 'sector', 'return_rate', 'price']
+        if 'consecutive_days' in df_limit_ups.columns:
+            display_cols.append('consecutive_days')
+        
+        display_df = df_limit_ups[display_cols].head(10).copy()
+        
+        # 重命名欄位
+        column_mapping = {
+            'stock_name': '股票名稱',
+            'symbol': '代碼',
+            'sector': '產業',
+            'return_rate': '漲幅',
+            'price': '價格',
+            'consecutive_days': '連板天數'
+        }
+        display_df = display_df.rename(columns=column_mapping)
+        
+        # 格式化
+        if '漲幅' in display_df.columns:
+            display_df['漲幅'] = display_df['漲幅'].apply(lambda x: f"{x:.2%}" if isinstance(x, (int, float)) else "N/A")
+        if '價格' in display_df.columns:
+            display_df['價格'] = display_df['價格'].apply(lambda x: f"{x:.2f}" if isinstance(x, (int, float)) else "N/A")
+        
+        st.dataframe(
+            display_df,
+            use_container_width=True,
+            hide_index=True
+        )
+        
+        # 顯示統計
+        col_s1, col_s2, col_s3 = st.columns(3)
+        with col_s1:
+            st.metric("總漲停家數", f"{len(df_limit_ups)}家")
+        with col_s2:
+            if 'is_rotc' in df_limit_ups.columns:
+                rotc_count = len(df_limit_ups[df_limit_ups['is_rotc'] == True])
+                st.metric("興櫃漲停", f"{rotc_count}家")
+            else:
+                st.metric("興櫃漲停", "N/A")
+        with col_s3:
+            if 'consecutive_days' in df_limit_ups.columns:
+                avg_days = df_limit_ups['consecutive_days'].mean() if not df_limit_ups.empty else 1
+                st.metric("平均連板", f"{avg_days:.1f}天")
+            else:
+                st.metric("平均連板", "N/A")
+    else:
+        st.info("📊 目前尚未偵測到今日強勢標的。")
+else:
+    st.error("❌ 無法載入漲停板數據")
+
+# --- 底部導覽列 ---
+st.divider()
+st.markdown("### 🔗 快速資源與工具")
+col_tool1, col_tool2, col_tool3, col_tool4 = st.columns(4)
+with col_tool1:
+    st.page_link("https://www.wantgoo.com/", label="玩股網", icon="📈")
+with col_tool2:
+    st.page_link("https://goodinfo.tw/", label="Goodinfo!", icon="📊")
+with col_tool3:
+    st.page_link("https://www.cnyes.com/", label="鉅亨網", icon="📰")
+with col_tool4:
+    st.page_link("https://tw.stock.yahoo.com/", label="Yahoo股市", icon="💹")
+
+st.caption(f"Alpha-Refinery 漲停戰情室 2.0 | 版本：{datetime.now().strftime('%Y.%m.%d')} | 數據僅供參考，投資有風險")
+
