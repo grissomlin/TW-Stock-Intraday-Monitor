@@ -222,7 +222,7 @@ def get_stock_price_data(symbol, max_retries=2):
     return None, None, None
 
 def get_consecutive_limit_up_days(symbol):
-    """查詢連續漲停天數"""
+    """查詢連續漲停天數（修正版）"""
     try:
         if not supabase:
             return 1
@@ -242,14 +242,21 @@ def get_consecutive_limit_up_days(symbol):
             return 1
         
         consecutive_days = 0
-        threshold = 0.098
         
-        for record in sorted(response.data, key=lambda x: x['analysis_date'], reverse=True):
+        # 按日期排序（從舊到新）
+        sorted_records = sorted(response.data, key=lambda x: x['analysis_date'])
+        
+        # 從昨天開始檢查連續漲停
+        for record in sorted_records[-5:]:  # 只看最近5天
             return_rate = record.get('return_rate')
+            is_rotc = record.get('is_rotc', False)
+            threshold = 0.10 if is_rotc else 0.098
+            
+            # 檢查 return_rate 是否為 None
             if return_rate is None:
                 break
-            is_rotc = record.get('is_rotc', False)
-            if return_rate >= (0.10 if is_rotc else 0.098):
+                
+            if float(return_rate) >= threshold:
                 consecutive_days += 1
             else:
                 break
@@ -258,7 +265,7 @@ def get_consecutive_limit_up_days(symbol):
         
     except Exception as e:
         log(f"查詢連續漲停天數失敗 {symbol}: {e}")
-        return 1
+        return 11
 
 def save_stock_with_analysis(stock_info):
     """儲存股票分析資訊到資料庫"""
@@ -658,5 +665,6 @@ if __name__ == "__main__":
     except Exception as e:
         log(f"❌ 程式執行錯誤: {e}")
         send_telegram_msg(f"❌ *程式執行錯誤*\n錯誤訊息: {str(e)[:100]}")
+
 
 
