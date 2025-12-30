@@ -31,7 +31,16 @@ def init_connections():
     return init_supabase(), init_gemini()
 
 @st.cache_data(ttl=600)
-def fetch_today_data(supabase_client, table_name, date_str):
+def fetch_today_data(table_name, date_str):
+    """
+    獲取今日數據
+    注意：在函數內部調用 init_supabase()，避免傳遞不可哈希的 supabase 客戶端
+    """
+    supabase_client = init_supabase()
+    if not supabase_client:
+        st.error("Supabase 連線失敗")
+        return pd.DataFrame()
+    
     try:
         res = supabase_client.table(table_name).select("*").eq("analysis_date", date_str).execute()
         return pd.DataFrame(res.data) if res.data else pd.DataFrame()
