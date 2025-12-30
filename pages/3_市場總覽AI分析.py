@@ -34,20 +34,52 @@ st.markdown("""
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         text-align: center;
     }
+    .ai-response-box {
+        background-color: #f8f9fa;
+        padding: 25px;
+        border-radius: 10px;
+        border-left: 5px solid #28a745;
+        margin: 20px 0;
+    }
+    .password-protected {
+        background-color: #fff3cd;
+        padding: 20px;
+        border-radius: 8px;
+        border: 1px solid #ffc107;
+        margin: 15px 0;
+    }
     </style>
 """, unsafe_allow_html=True)
 
 # ========== 導入共享功能 ==========
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+# 添加父目錄到路徑，讓 Python 能找到 utils 包
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)  # 專案根目錄
+
+# 將專案根目錄添加到路徑
+sys.path.insert(0, parent_dir)
+
 try:
-    from utils.common import init_connections, fetch_today_data, call_ai_safely
-    supabase, gemini_model = init_connections()
-    today = datetime.now().strftime("%Y-%m-%d")
-except Exception as e:
-    st.error(f"初始化失敗: {e}")
-    supabase = None
-    gemini_model = None
-    today = datetime.now().strftime("%Y-%m-%d")
+    # 從 utils 包導入
+    from utils import (
+        init_connections, 
+        fetch_today_data, 
+        call_ai_safely
+    )
+except ImportError as e:
+    st.error(f"導入共享功能失敗: {e}")
+    st.error(f"當前工作目錄: {os.getcwd()}")
+    st.error(f"Python 路徑: {sys.path}")
+    st.error(f"目錄內容: {os.listdir(parent_dir)}")
+    st.stop()
+
+# 初始化連線
+supabase, gemini_model = init_connections()
+today = datetime.now().strftime("%Y-%m-%d")
+
+# ========== 密碼保護機制 ==========
+if 'gemini_authorized' not in st.session_state:
+    st.session_state.gemini_authorized = False
 
 # ========== 頁面標題 ==========
 st.markdown("""
@@ -75,14 +107,18 @@ st.subheader("📊 今日市場統計")
 
 # 計算統計數據
 total_stocks = len(df_limit_ups)
-rotc_count = len(df_limit_ups[df_limit_ups['is_rotc'] == True])
+rotc_count = len(df_limit_ups[df_limit_ups['is_rotc'] == True]) if 'is_rotc' in df_limit_ups.columns else 0
 main_count = total_stocks - rotc_count
 avg_consecutive = df_limit_ups['consecutive_days'].mean() if 'consecutive_days' in df_limit_ups.columns else 1
 avg_return = df_limit_ups['return_rate'].mean() if 'return_rate' in df_limit_ups.columns else 0
 
 # 產業分佈
-sector_counts = df_limit_ups['sector'].value_counts().reset_index()
-sector_counts.columns = ['產業', '漲停家數']
+if 'sector' in df_limit_ups.columns:
+    df_limit_ups['sector'] = df_limit_ups['sector'].fillna('未分類')
+    sector_counts = df_limit_ups['sector'].value_counts().reset_index()
+    sector_counts.columns = ['產業', '漲停家數']
+else:
+    sector_counts = pd.DataFrame(columns=['產業', '漲停家數'])
 
 # 顯示統計卡片
 col1, col2, col3, col4 = st.columns(4)
@@ -103,7 +139,7 @@ with col3:
 
 with col4:
     st.markdown('<div class="stat-card">', unsafe_allow_html=True)
-    st.metric("平均漲幅", f"{avg_return:.2%}")
+    st.metric("平均漲幅", f"{avg_return:.2%}" if avg_return != 0 else "N/A")
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ========== 產業分佈視覺化 ==========
@@ -145,24 +181,52 @@ st.subheader("📋 今日漲停股票列表")
 
 if not df_limit_ups.empty:
     # 創建顯示表格
-    display_cols = ['stock_name', 'symbol', 'sector', 'return_rate', 'price', 'consecutive_days', 'is_rotc']
-    display_df = df_limit_ups[display_cols].copy()
-    display_df.columns = ['股票名稱', '代碼', '產業', '漲幅', '價格', '連板天數', '是否興櫃']
+    available_cols = []
+    for col in ['stock_name', 'symbol', 'sector', 'return_rate', 'price', 'consecutive_days', 'is_rotc']:
+        if col in df_limit_ups.columns:
+            available_cols.append(col)
     
-    # 格式化
-    display_df['漲幅'] = display_df['漲幅'].apply(lambda x: f"{x:.2%}" if x else "N/A")
-    display_df['價格'] = display_df['價格'].apply(lambda x: f"{x:.2f}" if x else "N/A")
-    display_df['是否興櫃'] = display_df['是否興櫃'].apply(lambda x: "✓" if x else "✗")
-    
-    # 排序
-    display_df = display_df.sort_values(['連板天數', '漲幅'], ascending=False)
-    
-    st.dataframe(
-        display_df,
-        use_container_width=True,
-        hide_index=True,
-        height=500
-    )
+    if available_cols:
+        display_df = df_limit_ups[available_cols].copy()
+        
+        # 重命名列
+        col_mapping = {
+            'stock_name': '股票名稱',
+            'symbol': '代碼',
+            'sector': '產業',
+            'return_rate': '漲幅',
+            'price': '價格',
+            'consecutive_days': '連板天數',
+            'is_rotc': '是否興櫃'
+        }
+        
+        # 只重命名存在的列
+        display_df = display_df.rename(columns={k: v for k, v in col_mapping.items() if k in display_df.columns})
+        
+        # 格式化
+        if '漲幅' in display_df.columns:
+            display_df['漲幅'] = display_df['漲幅'].apply(lambda x: f"{x:.2%}" if pd.notnull(x) else "N/A")
+        if '價格' in display_df.columns:
+            display_df['價格'] = display_df['價格'].apply(lambda x: f"{x:.2f}" if pd.notnull(x) else "N/A")
+        if '是否興櫃' in display_df.columns:
+            display_df['是否興櫃'] = display_df['是否興櫃'].apply(lambda x: "✓" if x else "✗")
+        
+        # 排序
+        sort_cols = []
+        if '連板天數' in display_df.columns:
+            sort_cols.append('連板天數')
+        if '漲幅' in display_df.columns:
+            sort_cols.append('漲幅')
+        
+        if sort_cols:
+            display_df = display_df.sort_values(sort_cols, ascending=False)
+        
+        st.dataframe(
+            display_df,
+            use_container_width=True,
+            hide_index=True,
+            height=500
+        )
 
 # ========== AI 分析區域 ==========
 st.divider()
@@ -170,9 +234,6 @@ st.header("🤖 市場總覽AI分析")
 
 if gemini_model:
     # 檢查授權
-    if 'gemini_authorized' not in st.session_state:
-        st.session_state.gemini_authorized = False
-    
     if not st.session_state.gemini_authorized:
         st.markdown('<div class="password-protected">', unsafe_allow_html=True)
         st.warning("🔒 AI分析需要授權解鎖")
@@ -196,87 +257,131 @@ if gemini_model:
         # 創建市場分析提示詞
         # 統計連板情況
         consecutive_stats = {}
-        for _, row in df_limit_ups.iterrows():
-            days = row.get('consecutive_days', 1)
-            consecutive_stats[days] = consecutive_stats.get(days, 0) + 1
+        if 'consecutive_days' in df_limit_ups.columns:
+            for _, row in df_limit_ups.iterrows():
+                days = row.get('consecutive_days', 1)
+                if pd.notnull(days):
+                    consecutive_stats[int(days)] = consecutive_stats.get(int(days), 0) + 1
         
-        stats_text = "\n".join([
-            f"- {days}連板：{count}家" 
-            for days, count in sorted(consecutive_stats.items())
-        ])
+        if consecutive_stats:
+            stats_text = "\n".join([
+                f"- {days}連板：{count}家" 
+                for days, count in sorted(consecutive_stats.items())
+            ])
+        else:
+            stats_text = "- 無連板數據"
         
         # 產業分布文字
-        sector_text = "\n".join([
-            f"- {sector}: {count}家" 
-            for sector, count in sector_counts.head(10).itertuples(index=False)
-        ])
+        if not sector_counts.empty:
+            sector_text = "\n".join([
+                f"- {sector}: {count}家" 
+                for sector, count in sector_counts.head(10).itertuples(index=False)
+            ])
+        else:
+            sector_text = "- 無產業數據"
         
         # 最強股票
-        strongest_stocks = display_df.nlargest(3, '連板天數')
-        strongest_text = "\n".join([
-            f"{i+1}. {row['股票名稱']}({row['代碼']}): {row['連板天數']}連板"
-            for i, (_, row) in enumerate(strongest_stocks.iterrows())
-        ])
+        if 'consecutive_days' in df_limit_ups.columns and not df_limit_ups.empty:
+            strongest_stocks = df_limit_ups.nlargest(3, 'consecutive_days')
+            strongest_text = "\n".join([
+                f"{i+1}. {row['stock_name'] if 'stock_name' in row else row['symbol']}({row.get('symbol', 'N/A')}): {row['consecutive_days']}連板"
+                for i, (_, row) in enumerate(strongest_stocks.iterrows())
+            ])
+        else:
+            strongest_text = "無連板數據"
+        
+        # 將 DataFrame 轉換為 markdown 表格的輔助函數
+        def df_to_markdown_table(df):
+            """將 DataFrame 轉換為 markdown 表格字符串"""
+            if df.empty:
+                return "| 欄位 | 值 |\n| --- | --- |\n| 無數據 | N/A |"
+            
+            # 創建表頭
+            headers = "| " + " | ".join(df.columns) + " |\n"
+            # 創建分隔線
+            separators = "| " + " | ".join(["---"] * len(df.columns)) + " |\n"
+            # 創建數據行
+            rows = ""
+            for _, row in df.iterrows():
+                rows += "| " + " | ".join(str(val) for val in row.values) + " |\n"
+            return headers + separators + rows
+        
+        # 顯示前10檔漲停股票
+        if not df_limit_ups.empty:
+            display_cols = []
+            for col in ['stock_name', 'symbol', 'sector', 'consecutive_days']:
+                if col in df_limit_ups.columns:
+                    display_cols.append(col)
+            
+            if display_cols:
+                top_10_stocks = df_limit_ups.head(10)[display_cols]
+                stock_table = df_to_markdown_table(top_10_stocks)
+            else:
+                stock_table = "無股票數據"
+        else:
+            stock_table = "無股票數據"
         
         market_prompt = f"""
-        請以台灣股市首席分析師身份，分析今日市場整體狀況：
+# 台灣股市市場總覽分析
 
-        ## 市場整體數據
-        - 總漲停家數：{total_stocks}家
-        - 市場溫度：{'熱絡' if total_stocks > 20 else '溫和'}
-        - 上市櫃股票：{main_count}家
-        - 興櫃股票：{rotc_count}家
-        - 平均連板天數：{avg_consecutive:.1f}天
-        - 平均漲幅：{avg_return:.2%}
-        
-        ## 連板統計：
-        {stats_text}
-        
-        ## 產業分布（前10名）：
-        {sector_text}
-        
-        ## 最強勢股票（連板數最多）：
-        {strongest_text}
+## 一、市場基本數據
+- **分析日期**: {today}
+- **總漲停家數**: {total_stocks}家
+- **市場熱度**: {'高' if total_stocks > 20 else '中' if total_stocks > 10 else '低'}
+- **上市櫃/興櫃比例**: {main_count}家 / {rotc_count}家
+- **平均連板天數**: {avg_consecutive:.1f}天
+- **平均漲幅**: {avg_return:.2%}
 
-        ## 請分析今日市場特徵：
+## 二、連板統計分析
+{stats_text}
 
-        ### 1. 市場情緒評估
-        - 投機氣氛濃淡
-        - 散戶參與程度
-        - 主力動向分析
+## 三、產業分布（前10名）
+{sector_text}
 
-        ### 2. 資金結構分析
-        - 資金集中度
-        - 類股輪動狀況
-        - 外資/內資比重
+## 四、最強勢股票（連板數最多）
+{strongest_text}
 
-        ### 3. 技術面信號
-        - 大盤位置與漲停家數關係
-        - 強勢股與弱勢股對比
-        - 關鍵技術位突破情況
+## 五、今日漲停股票列表（前10檔）
+{stock_table}
 
-        ### 4. 風險控管提示
-        - 系統性風險評估
-        - 過熱警示信號
-        - 流動性風險
+## 六、請進行以下分析：
 
-        ### 5. 明日操作策略
-        - 大盤方向預判
-        - 重點關注產業
-        - 風險控管建議
+### 1. 市場情緒與熱度分析
+- 從漲停家數看，當前市場處於什麼情緒階段？
+- 市場資金流向哪些產業？為什麼？
+- 散戶與機構的參與程度如何？
 
-        ### 6. 關鍵觀察指標
-        - 明日開盤強度
-        - 連板股續航力
-        - 成交量變化
+### 2. 產業輪動與資金結構
+- 今日主流產業有哪些？是否有持續性？
+- 資金是集中還是分散？對後市的影響？
+- 哪些產業可能有補漲機會？
 
-        ### 7. 給不同類型投資者的建議
-        - 長線投資者：
-        - 短線交易者：
-        - 當沖客：
+### 3. 技術面與市場結構
+- 從連板天數分布看市場的投機氣氛
+- 強勢股與弱勢股的技術特徵
+- 大盤位置與漲停家數的關係
 
-        請先給出今日市場核心結論（多空、強弱、風險），再詳細分析。
-        用數據支持觀點，避免主觀臆測。
+### 4. 風險評估與警示
+- 市場過熱的跡象有哪些？
+- 系統性風險與個股風險評估
+- 流動性風險與回調壓力
+
+### 5. 操作策略建議
+- 對於不同風險偏好的投資者：
+  * 保守型投資者：
+  * 積極型投資者：
+  * 短線交易者：
+- 重點關注的產業與個股
+- 風險控制與止損建議
+
+### 6. 明日市場展望
+- 關鍵觀察指標
+- 可能影響市場的因素
+- 多空關鍵位與支撐壓力
+
+## 七、總結
+請給出明確的市場結論和投資建議。
+用數據支持觀點，避免主觀臆測。
         """
         
         # 顯示提示詞
