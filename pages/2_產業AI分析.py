@@ -129,10 +129,24 @@ with col1:
         sector_data = sector_stats[selected_sector]
         sector_stocks_list = df_limit_ups[df_limit_ups['sector'] == selected_sector]
         
-        # 建立產業股票表格
+        # 建立產業股票表格 - 不使用 to_markdown()
         sector_table_df = sector_stocks_list[['symbol', 'stock_name', 'consecutive_days']].copy()
         sector_table_df.columns = ['代碼', '股票名稱', '連板天數']
-        sector_table = sector_table_df.to_markdown(index=False)
+        
+        # 將 DataFrame 轉換為 markdown 格式的字符串
+        def df_to_markdown_table(df):
+            """將 DataFrame 轉換為 markdown 表格字符串"""
+            # 創建表頭
+            headers = "| " + " | ".join(df.columns) + " |\n"
+            # 創建分隔線
+            separators = "| " + " | ".join(["---"] * len(df.columns)) + " |\n"
+            # 創建數據行
+            rows = ""
+            for _, row in df.iterrows():
+                rows += "| " + " | ".join(str(val) for val in row.values) + " |\n"
+            return headers + separators + rows
+        
+        sector_table = df_to_markdown_table(sector_table_df)
         
         # 建立產業AI提示詞
         sector_prompt = f"""請擔任專業市場分析師，分析台灣股市的{selected_sector}產業：
@@ -300,13 +314,25 @@ with col2:
 st.divider()
 st.subheader("🌐 市場整體AI分析")
 
-# 自動生成市場整體分析提示詞
-sector_distribution = sector_counts.to_markdown(index=False)
+# 自動生成市場整體分析提示詞 - 修改 to_markdown() 的使用
+def series_to_markdown_table(series, index_name='項目', value_name='數值'):
+    """將 Series 轉換為 markdown 表格字符串"""
+    df = series.reset_index()
+    df.columns = [index_name, value_name]
+    return df_to_markdown_table(df)
 
+# 處理產業分佈
+sector_distribution = df_to_markdown_table(sector_counts)
+
+# 處理連板天數分佈
 if 'consecutive_days' in df_limit_ups.columns:
-    consecutive_distribution = df_limit_ups['consecutive_days'].value_counts().sort_index().to_markdown()
+    consecutive_series = df_limit_ups['consecutive_days'].value_counts().sort_index()
+    # 將 Series 轉換為 DataFrame 再轉為 markdown
+    consecutive_df = consecutive_series.reset_index()
+    consecutive_df.columns = ['連板天數', '家數']
+    consecutive_distribution = df_to_markdown_table(consecutive_df)
 else:
-    consecutive_distribution = "N/A"
+    consecutive_distribution = "| 連板天數 | 家數 |\n| --- | --- |\n| N/A | N/A |"
 
 market_summary = f"""
 ## 台灣股市 今日漲停整體分析
