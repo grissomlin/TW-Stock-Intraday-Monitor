@@ -101,7 +101,8 @@ with col2:
 with col3:
     if supabase:
         try:
-            df_limit = fetch_today_data(supabase, "individual_stock_analysis", today)
+            # 修改這裡：移除 supabase 參數
+            df_limit = fetch_today_data("individual_stock_analysis", today)
             limit_count = len(df_limit) if not df_limit.empty else 0
             st.metric("今日漲停", f"{limit_count}檔")
         except Exception as e:
@@ -117,7 +118,8 @@ st.divider()
 st.header("📊 今日大盤總結")
 
 if supabase:
-    summary_df = fetch_today_data(supabase, "daily_market_summary", today)
+    # 修改這裡：移除 supabase 參數
+    summary_df = fetch_today_data("daily_market_summary", today)
     if not summary_df.empty:
         summary_content = summary_df.iloc[0]['summary_content']
         st.info(summary_content)
@@ -202,7 +204,8 @@ st.divider()
 st.header("🔥 今日漲停板概覽")
 
 if supabase:
-    df_limit_ups = fetch_today_data(supabase, "individual_stock_analysis", today)
+    # 修改這裡：移除 supabase 參數
+    df_limit_ups = fetch_today_data("individual_stock_analysis", today)
     
     if not df_limit_ups.empty:
         # 顯示前10檔漲停股票
@@ -270,4 +273,3 @@ with col_tool4:
     st.page_link("https://tw.stock.yahoo.com/", label="Yahoo股市", icon="💹")
 
 st.caption(f"Alpha-Refinery 漲停戰情室 2.0 | 版本：{datetime.now().strftime('%Y.%m.%d')} | 數據僅供參考，投資有風險")
-
