@@ -130,8 +130,7 @@ with col3:
         st.metric("今日漲停", "N/A")
 
 with col4:
-    st.metric("更新時間", datetime.now().strftime("%H:%M"))
-
+    st.metric("更新時間", taiwan_now.strftime("%H:%M"))
 # --- 今日大盤總結 ---
 st.divider()
 st.header("📊 今日大盤總結")
