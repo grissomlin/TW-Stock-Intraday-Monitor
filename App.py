@@ -5,6 +5,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import google.generativeai as genai
 import sys
+import pytz  # 新增：時區支援
 
 # ========== 檢查必要套件 ==========
 try:
@@ -27,6 +28,22 @@ st.markdown("""
     .password-protected { border: 2px solid #ff6b6b; border-radius: 8px; padding: 15px; background-color: #fff5f5; }
     </style>
 """, unsafe_allow_html=True)
+
+# ========== 設定台灣時區 ==========
+# 定義台灣時區
+TAIWAN_TZ = pytz.timezone('Asia/Taipei')
+
+# 獲取台灣時間的現在時刻
+def get_taiwan_now():
+    """返回台灣時間的當前時刻"""
+    utc_now = datetime.now(pytz.utc)
+    taiwan_now = utc_now.astimezone(TAIWAN_TZ)
+    return taiwan_now
+
+# 獲取台灣時間的今天和昨天
+taiwan_now = get_taiwan_now()
+today = taiwan_now.strftime("%Y-%m-%d")
+yesterday = (taiwan_now - timedelta(days=1)).strftime("%Y-%m-%d")
 
 # ========== 1. 初始化連線 ==========
 @st.cache_resource
@@ -52,8 +69,6 @@ def init_gemini():
 
 supabase = init_supabase()
 gemini_model = init_gemini()
-today = datetime.now().strftime("%Y-%m-%d")
-yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
 
 # ========== 2. 輔助函式 ==========
 @st.cache_data(ttl=600)
@@ -98,6 +113,10 @@ with st.sidebar:
     st.page_link("https://claude.ai/", label="Claude", icon="📘")
 
     st.divider()
+    # 顯示當前時間資訊
+    st.subheader("🕐 時間資訊")
+    st.info(f"台灣時間：{taiwan_now.strftime('%Y-%m-%d %H:%M:%S')}")
+    
     st.subheader("🛠️ 除錯與維護工具")
     if st.button("🔄 強制清除所有快取並重新載入"):
         st.cache_data.clear()
@@ -107,7 +126,7 @@ with st.sidebar:
 
 # ========== 5. 主介面呈現 ==========
 st.title("🚀 Alpha-Refinery 漲停戰情室 2.0")
-st.caption(f"📅 分析日期：{today} | 🕐 最後更新：{datetime.now().strftime('%H:%M:%S')}")
+st.caption(f"📅 分析日期：{today} | 🕐 最後更新：{taiwan_now.strftime('%H:%M:%S')} | 🌐 台灣時間")
 
 if not supabase:
     st.error("❌ 資料庫連線失敗，請檢查 Supabase 設定")
@@ -195,4 +214,6 @@ with col_tool3:
     st.page_link("https://www.cnyes.com/", label="鉅亨網", icon="📰")
 with col_tool4:
     st.page_link("https://tw.stock.yahoo.com/", label="Yahoo股市", icon="💹")
-st.caption(f"Alpha-Refinery 漲停戰情室 2.0 | 版本：{datetime.now().strftime('%Y.%m.%d')} | 數據僅供參考，投資有風險")
+
+# 使用台灣時間顯示版本
+st.caption(f"Alpha-Refinery 漲停戰情室 2.0 | 版本：{taiwan_now.strftime('%Y.%m.%d')} | 數據僅供參考，投資有風險")
