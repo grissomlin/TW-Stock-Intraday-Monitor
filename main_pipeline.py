@@ -615,7 +615,7 @@ def run_monitor():
                     
                     ret = (curr_close / prev_close) - 1
                     threshold = 0.1 if stock_info['is_rotc'] else 0.098
-                    # --- 推薦替換的邏輯片段 ---
+                    # 在迴圈內部：當判定 ret >= threshold 時
                     if ret >= threshold:
                         info = {
                             'symbol': symbol,
@@ -624,37 +624,50 @@ def run_monitor():
                             'return': ret,
                             'price': float(curr_close),
                             'is_rotc': stock_info['is_rotc'],
-                            'consecutive_days': 1  # 稍後會由專用函式更新
+                            'consecutive_days': 1
                         }
                         limit_up_stocks.append(info)
                         found_count += 1
                     
-                        # 【第一步】立刻寫入資料庫：確保網頁端即時更新
+                        # 【步驟 1】立刻寫入資料庫（基礎資料）
                         if supabase:
                             save_stock_with_analysis(info)
-                            log(f"📍 資料同步成功: {symbol} {info['name']}")
+                            log(f"📍 資料庫已記錄: {symbol}")
                     
-                        # 【第二步】邊跑邊問 AI：嘗試獲取點評
+                        # 【步驟 2】執行 AI 分析
+                        ai_comment = "AI 額度已用完，請稍後至網頁版查看。"
                         if ai_analyzer and ai_analyzer.is_available():
                             try:
-                                log(f"🤖 正在請求 AI 分析: {symbol}...")
-                                # 這裡會呼叫 Gemini API
-                                ai_comment = ai_analyzer.analyze_individual_stock(info)
-                                if ai_comment:
+                                log(f"🤖 正在分析 AI: {symbol}...")
+                                res = ai_analyzer.analyze_individual_stock(info)
+                                if res:
+                                    ai_comment = res
                                     info['ai_comment'] = ai_comment
-                                    # 【第三步】分析成功後立即補更：補上 ai_comment
+                                    # 補更 AI 點評到資料庫
                                     save_stock_with_analysis(info)
-                                    log(f"✅ AI 點評已更新: {symbol}")
+                                    log(f"✅ AI 分析更新成功: {symbol}")
                             except Exception as e:
-                                if "429" in str(e):
-                                    log(f"⚠️ 額度用盡 (429)，跳過 AI 分析: {symbol}")
-                                else:
-                                    log(f"❌ AI 分析異常 {symbol}: {str(e)[:50]}")
-                        
-                        # 【第四步】保護機制：為了免費版額度，強制冷卻
-                        # 免費版 1.5 Flash 限制每分鐘 15 次，建議間隔 5 秒以上最保險
-                        sleep_time = random.uniform(5.0, 8.0)
-                        time.sleep(sleep_time)
+                                log(f"⚠️ AI 失敗 {symbol}: {str(e)[:50]}")
+                    
+                        # 【步驟 3】立刻發送 Telegram 通知（包含 AI 點評）
+                        try:
+                            stock_code = symbol.split('.')[0]
+                            emoji = "🚀"
+                            msg = (
+                                f"{emoji} *發現強勢漲停股: {info['name']}* ({symbol})\n"
+                                f"📈 漲幅: {ret:.2%} | 價格: {info['price']:.2f}\n"
+                                f"📊 產業: {info['sector']}\n"
+                                f"🤖 AI點評: {ai_comment[:200]}...\n" # 取前200字避免訊息過長
+                                f"🔗 [查看K線](https://www.wantgoo.com/stock/{stock_code}/technical-chart)"
+                            )
+                            send_telegram_msg(msg, delay=1.0) # 這裡的 delay 是發完後的微調
+                            log(f"📤 Telegram 推播完成: {symbol}")
+                        except Exception as e:
+                            log(f"❌ Telegram 發送失敗 {symbol}: {e}")
+                    
+                        # 【步驟 4】強制冷卻：保護 Gemini API 額度 (重要！)
+                        # 建議至少 6~8 秒，因為免費版 1.5 Flash 限制很高
+                        time.sleep(random.uniform(6.0, 9.0))
 
                         
                 except Exception as e:
@@ -809,6 +822,7 @@ if __name__ == "__main__":
     except Exception as e:
         log(f"❌ 程式執行錯誤: {e}")
         send_telegram_msg(f"❌ *程式執行錯誤*\n錯誤訊息: {str(e)[:100]}")
+
 
 
 
