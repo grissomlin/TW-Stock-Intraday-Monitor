@@ -615,6 +615,7 @@ def run_monitor():
                     
                     ret = (curr_close / prev_close) - 1
                     threshold = 0.1 if stock_info['is_rotc'] else 0.098
+                    # --- 推薦替換的邏輯片段 ---
                     if ret >= threshold:
                         info = {
                             'symbol': symbol,
@@ -622,39 +623,38 @@ def run_monitor():
                             'sector': stock_info['sector'],
                             'return': ret,
                             'price': float(curr_close),
-                            'prev_close': float(prev_close),
                             'is_rotc': stock_info['is_rotc'],
-                            'market': stock_info.get('market', ''),
-                            'consecutive_days': 1
+                            'consecutive_days': 1  # 稍後會由專用函式更新
                         }
-                    
                         limit_up_stocks.append(info)
                         found_count += 1
                     
-                        # ===============================
-                        # ⭐ 先存 DB（一定成功）
-                        # ===============================
+                        # 【第一步】立刻寫入資料庫：確保網頁端即時更新
                         if supabase:
                             save_stock_with_analysis(info)
+                            log(f"📍 資料同步成功: {symbol} {info['name']}")
                     
-                        # ===============================
-                        # ⭐ 再嘗試 AI（失敗就跳）
-                        # ===============================
+                        # 【第二步】邊跑邊問 AI：嘗試獲取點評
                         if ai_analyzer and ai_analyzer.is_available():
                             try:
+                                log(f"🤖 正在請求 AI 分析: {symbol}...")
+                                # 這裡會呼叫 Gemini API
                                 ai_comment = ai_analyzer.analyze_individual_stock(info)
                                 if ai_comment:
-                                    info["ai_comment"] = ai_comment
-                                    save_stock_with_analysis(info)  # upsert 補 AI
-                    
+                                    info['ai_comment'] = ai_comment
+                                    # 【第三步】分析成功後立即補更：補上 ai_comment
+                                    save_stock_with_analysis(info)
+                                    log(f"✅ AI 點評已更新: {symbol}")
                             except Exception as e:
                                 if "429" in str(e):
-                                    log(f"⏭️ AI 額度用完，跳過 {symbol}")
+                                    log(f"⚠️ 額度用盡 (429)，跳過 AI 分析: {symbol}")
                                 else:
-                                    log(f"⚠️ AI分析失敗 {symbol}: {e}")
-                    
-                            # ⭐ 免費版 Gemini 必須慢
-                            time.sleep(random.uniform(4.0, 8.0))
+                                    log(f"❌ AI 分析異常 {symbol}: {str(e)[:50]}")
+                        
+                        # 【第四步】保護機制：為了免費版額度，強制冷卻
+                        # 免費版 1.5 Flash 限制每分鐘 15 次，建議間隔 5 秒以上最保險
+                        sleep_time = random.uniform(5.0, 8.0)
+                        time.sleep(sleep_time)
 
                         
                 except Exception as e:
@@ -809,5 +809,6 @@ if __name__ == "__main__":
     except Exception as e:
         log(f"❌ 程式執行錯誤: {e}")
         send_telegram_msg(f"❌ *程式執行錯誤*\n錯誤訊息: {str(e)[:100]}")
+
 
 
