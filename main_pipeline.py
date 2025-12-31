@@ -615,7 +615,6 @@ def run_monitor():
                     
                     ret = (curr_close / prev_close) - 1
                     threshold = 0.1 if stock_info['is_rotc'] else 0.098
-                    
                     if ret >= threshold:
                         info = {
                             'symbol': symbol,
@@ -626,10 +625,37 @@ def run_monitor():
                             'prev_close': float(prev_close),
                             'is_rotc': stock_info['is_rotc'],
                             'market': stock_info.get('market', ''),
-                            'consecutive_days': 1  # 稍後會計算
+                            'consecutive_days': 1
                         }
+                    
                         limit_up_stocks.append(info)
                         found_count += 1
+                    
+                        # ===============================
+                        # ⭐ 先存 DB（一定成功）
+                        # ===============================
+                        if supabase:
+                            save_stock_with_analysis(info)
+                    
+                        # ===============================
+                        # ⭐ 再嘗試 AI（失敗就跳）
+                        # ===============================
+                        if ai_analyzer and ai_analyzer.is_available():
+                            try:
+                                ai_comment = ai_analyzer.analyze_individual_stock(info)
+                                if ai_comment:
+                                    info["ai_comment"] = ai_comment
+                                    save_stock_with_analysis(info)  # upsert 補 AI
+                    
+                            except Exception as e:
+                                if "429" in str(e):
+                                    log(f"⏭️ AI 額度用完，跳過 {symbol}")
+                                else:
+                                    log(f"⚠️ AI分析失敗 {symbol}: {e}")
+                    
+                            # ⭐ 免費版 Gemini 必須慢
+                            time.sleep(random.uniform(4.0, 8.0))
+
                         
                 except Exception as e:
                     error_count += 1
@@ -665,30 +691,6 @@ def run_monitor():
                 log(f"計算連續漲停天數失敗 {stock['symbol']}: {e}")
                 stock['consecutive_days'] = 1
         
-        # 2. 個股AI分析
-        log("🧠 進行個股AI分析...")
-        analyzed_stocks = []
-        for stock in tqdm(limit_up_stocks, desc="個股AI分析"):
-            try:
-                # 先檢查股票是否已經有AI分析（避免重複）
-                if not stock.get('ai_comment'):
-                    ai_comment = ai_analyzer.analyze_individual_stock(stock)
-                    if ai_comment:
-                        stock['ai_comment'] = ai_comment
-                        analyzed_stocks.append(stock)
-                        
-                        # 儲存到資料庫
-                        save_stock_with_analysis(stock)
-                        
-                        # 更新連續漲停追蹤
-                        update_consecutive_limit_up(stock)
-                
-                # 避免API限制，每分析一支股票等待1-2秒
-                time.sleep(random.uniform(1.0, 2.0))
-                
-            except Exception as e:
-                log(f"個股AI分析失敗 {stock['symbol']}: {str(e)[:100]}")
-                continue
         
         # 3. 產業AI分析
         log("🏭 進行產業AI分析...")
@@ -807,4 +809,5 @@ if __name__ == "__main__":
     except Exception as e:
         log(f"❌ 程式執行錯誤: {e}")
         send_telegram_msg(f"❌ *程式執行錯誤*\n錯誤訊息: {str(e)[:100]}")
+
 
