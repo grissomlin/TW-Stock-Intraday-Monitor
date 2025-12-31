@@ -717,10 +717,12 @@ def run_monitor():
                 log(f"⚠️ 初始存檔失敗 {stock['symbol']}: {e}")
 
     # ========== AI分析階段 ==========
+
+# ========== AI分析階段 ==========
     if limit_up_stocks and ai_analyzer and ai_analyzer.is_available():
         log("🤖 開始AI分析階段...")
         
-        # 1. 計算連續漲停天數
+        # 1. 計算連續漲停天數 (這部分不消耗 AI 額度)
         log("📅 計算連續漲停天數...")
         for stock in limit_up_stocks:
             try:
@@ -730,6 +732,10 @@ def run_monitor():
                 log(f"計算連續漲停天數失敗 {stock['symbol']}: {e}")
                 stock['consecutive_days'] = 1
         
+        # ⭐【關鍵修正】在進入產業分析前，強制休息一分鐘
+        # 因為前面的個股掃描可能已經耗盡了每分鐘 15 次的額度
+        log("⏳ 等待 60 秒以重置 Gemini API 配額...")
+        time.sleep(60)
         
         # 3. 產業AI分析
         log("🏭 進行產業AI分析...")
@@ -742,28 +748,39 @@ def run_monitor():
         
         sector_analyses = {}
         for sector, stocks_in_sector in sector_groups.items():
-            if len(stocks_in_sector) > 1:  # 同產業超過1家才分析
+            if len(stocks_in_sector) > 1:  # 同產業超過 1 家才分析
                 try:
+                    log(f"🧠 正在分析產業: {sector} ({len(stocks_in_sector)}檔)...")
                     analysis = ai_analyzer.analyze_sector(sector, stocks_in_sector)
                     if analysis:
                         sector_analyses[sector] = analysis
                         save_sector_analysis(sector, stocks_in_sector, analysis)
+                        log(f"✅ 產業分析成功: {sector}")
                     
-                    # 避免API限制
-                    time.sleep(random.uniform(1.5, 2.5))
+                    # ⭐【關鍵修正】每分析一個產業，休息 12-15 秒
+                    # 確保不會觸發每分鐘請求限制
+                    time.sleep(random.uniform(12.0, 15.0))
                     
                 except Exception as e:
-                    log(f"產業AI分析失敗 {sector}: {str(e)[:100]}")
+                    if "429" in str(e):
+                        log(f"⚠️ 額度耗盡，跳過產業分析: {sector}")
+                        time.sleep(30) # 遇到 429 休息久一點
+                    else:
+                        log(f"產業AI分析失敗 {sector}: {str(e)[:100]}")
         
+        # ⭐ 再次休息確保市場分析有額度
+        time.sleep(10)
+
         # 4. 市場AI分析
         log("📊 進行市場AI分析...")
         market_summary = None
         try:
             market_summary = ai_analyzer.analyze_market_summary(limit_up_stocks)
+            log("✅ 市場總覽分析成功")
         except Exception as e:
             log(f"市場AI分析失敗: {str(e)[:100]}")
         
-        # 5. 發送分層通知
+        # 5. 發送分層通知 (這裡會發送剛才分析成功的內容)
         send_layered_notifications(limit_up_stocks, sector_analyses, market_summary)
         
         # 6. 更新市場總結
@@ -848,6 +865,7 @@ if __name__ == "__main__":
     except Exception as e:
         log(f"❌ 程式執行錯誤: {e}")
         send_telegram_msg(f"❌ *程式執行錯誤*\n錯誤訊息: {str(e)[:100]}")
+
 
 
 
