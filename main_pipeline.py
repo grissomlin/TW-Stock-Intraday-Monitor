@@ -524,7 +524,18 @@ def send_basic_notification(stocks):
         msg += "\n"
     
     send_telegram_msg(msg)
-
+def clean_markdown(text):
+    """
+    清洗 AI 內容中的 Markdown 衝突字元，防止 Telegram 400 錯誤
+    """
+    if not text:
+        return ""
+    # 移除或取代可能導致 Telegram 解析失敗的字元
+    # Telegram Markdown 語法中最敏感的符號包括 * _ [ ] ( ) `
+    chars_to_fix = ["*", "_", "`", "[", "]", "(", ")"]
+    for char in chars_to_fix:
+        text = text.replace(char, " ")
+    return text.strip()
 # ========== 主執行邏輯 ==========
 def run_monitor():
     start_time = time.time()
@@ -653,30 +664,33 @@ def run_monitor():
                                     log(f"⚠️ Gemini 額度用盡，跳過 {symbol} 分析")
                                 else:
                                     log(f"⚠️ AI 失敗 {symbol}: {str(e)[:50]}")
-                    
-                        # 3. 【逐筆發送】發送 Telegram 通知（含儀表板連結）
+                      # 3. 【逐筆發送】發送 Telegram 通知（含清洗功能與儀表板連結）
                         try:
                             stock_code = symbol.split('.')[0]
-                            # 定義你的儀表板網址
                             dashboard_url = "https://tw-stock-intraday-monitor-d4wusvuh9sys8uumcdwms3.streamlit.app/%E5%80%8B%E8%82%A1AI%E5%88%86%E6%9E%90"
+                            
+                            # 【核心修正】清洗 AI 點評中的特殊字元，避免 400 錯誤
+                            safe_ai_comment = clean_markdown(ai_comment[:150])
                             
                             # 決定 Emoji 豐富度
                             emoji = "🚀" if not info['is_rotc'] else "🧧"
                             
+                            # 重新組合訊息，確保格式嚴謹
                             msg = (
                                 f"{emoji} *發現漲停強勢股: {info['name']}* ({symbol})\n"
                                 f"📈 漲幅: {ret:.2%} | 💵 價格: {info['price']:.2f}\n"
                                 f"🏭 產業: {info['sector']}\n"
-                                f"🤖 AI點評: {ai_comment[:150]}...\n\n"
+                                f"🤖 AI點評: {safe_ai_comment}...\n\n"
                                 f"🔗 [查看網頁儀表板]({dashboard_url})\n"
                                 f"📊 [玩股網K線](https://www.wantgoo.com/stock/{stock_code}/technical-chart)"
                             )
-                            # 逐筆發送，每筆間隔會被下方的 sleep 拉開，不會觸發 429
+                            
+                            # 逐筆發送
                             send_telegram_msg(msg, delay=1.0)
                             log(f"📤 Telegram 推播完成: {symbol}")
                         except Exception as e:
-                            log(f"❌ Telegram 發送失敗 {symbol}: {e}")
-                    
+                            log(f"❌ Telegram 發送流程失敗 {symbol}: {e}")
+
                         # 4. 【冷卻時間】保護 Gemini 免費版配額 (15 RPM)
                         # 設定 6~9 秒，確保一分鐘內請求不超過 10 次，非常穩健
                         time.sleep(random.uniform(6.0, 9.0))
@@ -834,6 +848,7 @@ if __name__ == "__main__":
     except Exception as e:
         log(f"❌ 程式執行錯誤: {e}")
         send_telegram_msg(f"❌ *程式執行錯誤*\n錯誤訊息: {str(e)[:100]}")
+
 
 
 
