@@ -102,8 +102,6 @@ st.markdown(f"""
     <div class="welcome-header">
         <h1 style="font-size: 3rem; margin-bottom: 1rem;">🚀 Alpha-Refinery 漲停戰情室 2.0</h1>
         <p style="font-size: 1.2rem; opacity: 0.9;">智能漲停板分析系統 | 即時監控 | AI決策支援</p>
-        # 舊：<p style="font-size: 1rem; opacity: 0.8;">📅 分析日期：{today} | 🕐 最後更新：{datetime.now().strftime('%H:%M:%S')}</p>
-        # 新：
         <p style="font-size: 1rem; opacity: 0.8;">📅 分析日期：{today} | 🕐 最後更新：{taiwan_now.strftime('%H:%M:%S')} | 🌐 台灣時間</p>
         
     </div>
