@@ -295,7 +295,7 @@ def df_to_markdown_table(df):
         rows += "| " + " | ".join(str(val) for val in row.values) + " |\n"
     return headers + separators + rows
 
-# === 修正後的代碼區塊：提供完整清單並優化排序 ===
+# === 1. 數據準備區：獲取完整並排序的表格 ===
 if not df_limit_ups.empty:
     display_cols = []
     # 定義 AI 核心分析所需的關鍵欄位
@@ -304,25 +304,39 @@ if not df_limit_ups.empty:
             display_cols.append(col)
     
     if display_cols:
-        # ✅ 修正 1：依「連板天數」由高到低排序，讓 AI 優先分析龍頭股
-        # ✅ 修正 2：移除 .head(10)，確保所有漲停股票都能進入 AI 的分析範圍
+        # ✅ 修正：依「連板天數」排序，且不使用 .head(10)，提供完整數據
         full_stocks_sorted = df_limit_ups.sort_values(by='consecutive_days', ascending=False)[display_cols]
-        
-        # ✅ 修正 3：修正變數名稱不一致的問題，傳入排序後的完整表格
+        # ✅ 修正：將完整清單轉換為 Markdown 表格
         stock_table = df_to_markdown_table(full_stocks_sorted)
     else:
         stock_table = "無股票數據"
 else:
     stock_table = "無股票數據"
 
-# 從 config 獲取提示詞模板
-try:
-    # 使用 get_ai_prompt_template 函數從 config 獲取提示詞
-    market_prompt_template = get_ai_prompt_template("market_analysis")
-    
-    # 如果 config 中沒有定義，使用預設模板
-    if not market_prompt_template:
-        market_prompt_template = """請以台灣股市首席分析師身份，分析今日市場整體狀況：
+# === 2. 格式化提示詞：確保數據正確填入 ===
+# 計算市場溫度
+market_temp = '熱絡' if total_stocks > 20 else '溫和' if total_stocks > 10 else '冷清'
+
+# 格式化提示詞
+market_prompt = market_prompt_template.format(
+    today=today,
+    total_stocks=total_stocks,
+    market_temp=market_temp,
+    main_count=main_count,
+    rotc_count=rotc_count,
+    avg_consecutive=f"{avg_consecutive:.1f}",
+    avg_return=f"{avg_return:.2%}",
+    stats_text=stats_text,
+    sector_text=sector_text,
+    strongest_text=strongest_text,
+    stock_table=stock_table  # 這裡現在會填入排序後的「完整清單」
+)
+
+# === 3. (選做) 修正模板標題 ===
+# 建議將 market_prompt_template 中的：
+# "## 漲停股票列表（前10檔）：" 
+# 改為：
+# "## 今日漲停股票完整清單（按連板天數排序）："
 
 ## 市場整體數據
 - 總漲停家數：{total_stocks}家
