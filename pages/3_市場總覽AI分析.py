@@ -295,16 +295,21 @@ def df_to_markdown_table(df):
         rows += "| " + " | ".join(str(val) for val in row.values) + " |\n"
     return headers + separators + rows
 
-# 顯示前10檔漲停股票
+# === 修正後的代碼區塊：提供完整清單並優化排序 ===
 if not df_limit_ups.empty:
     display_cols = []
+    # 定義 AI 核心分析所需的關鍵欄位
     for col in ['stock_name', 'symbol', 'sector', 'consecutive_days']:
         if col in df_limit_ups.columns:
             display_cols.append(col)
     
     if display_cols:
-        top_10_stocks = df_limit_ups.head(10)[display_cols]
-        stock_table = df_to_markdown_table(top_10_stocks)
+        # ✅ 修正 1：依「連板天數」由高到低排序，讓 AI 優先分析龍頭股
+        # ✅ 修正 2：移除 .head(10)，確保所有漲停股票都能進入 AI 的分析範圍
+        full_stocks_sorted = df_limit_ups.sort_values(by='consecutive_days', ascending=False)[display_cols]
+        
+        # ✅ 修正 3：修正變數名稱不一致的問題，傳入排序後的完整表格
+        stock_table = df_to_markdown_table(full_stocks_sorted)
     else:
         stock_table = "無股票數據"
 else:
