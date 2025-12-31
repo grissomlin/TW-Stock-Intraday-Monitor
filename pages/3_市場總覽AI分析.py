@@ -239,11 +239,7 @@ if not df_limit_ups.empty:
             height=500
         )
 
-# ========== AI 分析區域 ==========
-st.divider()
-st.header("🤖 市場總覽AI分析")
-
-# 準備分析資料
+# ========== 準備分析資料 ==========
 # 統計連板情況
 consecutive_stats = {}
 if 'consecutive_days' in df_limit_ups.columns:
@@ -295,7 +291,7 @@ def df_to_markdown_table(df):
         rows += "| " + " | ".join(str(val) for val in row.values) + " |\n"
     return headers + separators + rows
 
-# === 1. 數據準備區：獲取完整並排序的表格 ===
+# ========== 數據準備區：獲取完整並排序的表格 ==========
 if not df_limit_ups.empty:
     display_cols = []
     # 定義 AI 核心分析所需的關鍵欄位
@@ -304,39 +300,25 @@ if not df_limit_ups.empty:
             display_cols.append(col)
     
     if display_cols:
-        # ✅ 修正：依「連板天數」排序，且不使用 .head(10)，提供完整數據
+        # 修正：依「連板天數」排序，且不使用 .head(10)，提供完整數據
         full_stocks_sorted = df_limit_ups.sort_values(by='consecutive_days', ascending=False)[display_cols]
-        # ✅ 修正：將完整清單轉換為 Markdown 表格
+        # 修正：將完整清單轉換為 Markdown 表格
         stock_table = df_to_markdown_table(full_stocks_sorted)
     else:
         stock_table = "無股票數據"
 else:
     stock_table = "無股票數據"
 
-# === 2. 格式化提示詞：確保數據正確填入 ===
-# 計算市場溫度
-market_temp = '熱絡' if total_stocks > 20 else '溫和' if total_stocks > 10 else '冷清'
-
-# 格式化提示詞
-market_prompt = market_prompt_template.format(
-    today=today,
-    total_stocks=total_stocks,
-    market_temp=market_temp,
-    main_count=main_count,
-    rotc_count=rotc_count,
-    avg_consecutive=f"{avg_consecutive:.1f}",
-    avg_return=f"{avg_return:.2%}",
-    stats_text=stats_text,
-    sector_text=sector_text,
-    strongest_text=strongest_text,
-    stock_table=stock_table  # 這裡現在會填入排序後的「完整清單」
-)
-
-# === 3. (選做) 修正模板標題 ===
-# 建議將 market_prompt_template 中的：
-# "## 漲停股票列表（前10檔）：" 
-# 改為：
-# "## 今日漲停股票完整清單（按連板天數排序）："
+# ========== 定義提示詞模板 ==========
+try:
+    # 嘗試從 config 讀取模板
+    market_prompt_template = get_ai_prompt_template("market_analysis")
+    if not market_prompt_template:
+        raise ValueError("模板載入失敗")
+except Exception as e:
+    st.warning(f"無法從 config 讀取提示詞模板，使用預設模板: {e}")
+    # 修正後的預設模板
+    market_prompt_template = """請以台灣股市首席分析師身份，分析今日市場整體狀況：
 
 ## 市場整體數據
 - 總漲停家數：{total_stocks}家
@@ -355,7 +337,7 @@ market_prompt = market_prompt_template.format(
 ## 最強勢股票（連板數最多）：
 {strongest_text}
 
-## 漲停股票列表（前10檔）：
+## 今日漲停股票完整清單（按連板天數排序）：
 {stock_table}
 
 ## 請進行以下分析：
@@ -397,32 +379,8 @@ market_prompt = market_prompt_template.format(
 
 請先給出今日市場核心結論（多空、強弱、風險），再詳細分析。
 用數據支持觀點，避免主觀臆測。"""
-except Exception as e:
-    st.warning(f"無法從 config 讀取提示詞模板: {e}")
-    market_prompt_template = """請以台灣股市首席分析師身份，分析今日市場整體狀況：
 
-## 市場整體數據
-- 總漲停家數：{total_stocks}家
-- 市場溫度：{market_temp}
-- 上市櫃股票：{main_count}家
-- 興櫃股票：{rotc_count}家
-- 平均連板天數：{avg_consecutive}天
-- 平均漲幅：{avg_return}
-
-## 連板統計：
-{stats_text}
-
-## 產業分布（前10名）：
-{sector_text}
-
-## 最強勢股票（連板數最多）：
-{strongest_text}
-
-## 漲停股票列表（前10檔）：
-{stock_table}
-
-請進行全面的市場分析，包括市場情緒、資金流向、風險評估和操作建議。"""
-
+# ========== 格式化提示詞：確保數據正確填入 ==========
 # 計算市場溫度
 market_temp = '熱絡' if total_stocks > 20 else '溫和' if total_stocks > 10 else '冷清'
 
@@ -438,8 +396,12 @@ market_prompt = market_prompt_template.format(
     stats_text=stats_text,
     sector_text=sector_text,
     strongest_text=strongest_text,
-    stock_table=stock_table
+    stock_table=stock_table  # 這裡現在會填入排序後的「完整清單」
 )
+
+# ========== AI 分析區域 ==========
+st.divider()
+st.header("🤖 市場總覽AI分析")
 
 # 顯示提示詞和AI分析按鈕
 st.markdown("<div class='ai-prompt-box'>", unsafe_allow_html=True)
@@ -501,7 +463,7 @@ with col4:
 
 st.markdown("</div>", unsafe_allow_html=True)
 
-# === Gemini 市場報告獨立顯示 ===
+# ========== Gemini 市場報告獨立顯示 ==========
 if "ai_response_market" in st.session_state:
     st.divider()
     with st.expander("🤖 Gemini 市場分析報告", expanded=True):
