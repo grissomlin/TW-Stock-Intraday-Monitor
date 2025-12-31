@@ -8,7 +8,17 @@ from datetime import datetime, timedelta
 import sys
 import os
 import urllib.parse
+import pytz  # 新增：用於時區處理
 
+# 定義台灣時區
+TAIWAN_TZ = pytz.timezone('Asia/Taipei')
+
+# 獲取台灣時間的現在時刻
+def get_taiwan_now():
+    """返回台灣時間的當前時刻"""
+    utc_now = datetime.now(pytz.utc)
+    taiwan_now = utc_now.astimezone(TAIWAN_TZ)
+    return taiwan_now
 # 設定頁面配置
 st.set_page_config(
     page_title="Alpha-Refinery 漲停戰情室 2.0",
@@ -77,8 +87,11 @@ except ImportError as e:
 
 # 初始化連線
 supabase, gemini_model = init_connections()
-today = datetime.now().strftime("%Y-%m-%d")
 
+# 舊：today = datetime.now().strftime("%Y-%m-%d")
+# 新：
+taiwan_now = get_taiwan_now()
+today = taiwan_now.strftime("%Y-%m-%d")
 # ========== 密碼保護機制 ==========
 if 'gemini_authorized' not in st.session_state:
     st.session_state.gemini_authorized = False
@@ -89,7 +102,10 @@ st.markdown(f"""
     <div class="welcome-header">
         <h1 style="font-size: 3rem; margin-bottom: 1rem;">🚀 Alpha-Refinery 漲停戰情室 2.0</h1>
         <p style="font-size: 1.2rem; opacity: 0.9;">智能漲停板分析系統 | 即時監控 | AI決策支援</p>
-        <p style="font-size: 1rem; opacity: 0.8;">📅 分析日期：{today} | 🕐 最後更新：{datetime.now().strftime('%H:%M:%S')}</p>
+        # 舊：<p style="font-size: 1rem; opacity: 0.8;">📅 分析日期：{today} | 🕐 最後更新：{datetime.now().strftime('%H:%M:%S')}</p>
+        # 新：
+        <p style="font-size: 1rem; opacity: 0.8;">📅 分析日期：{today} | 🕐 最後更新：{taiwan_now.strftime('%H:%M:%S')} | 🌐 台灣時間</p>
+        
     </div>
 """, unsafe_allow_html=True)
 
@@ -261,7 +277,7 @@ if supabase:
             st.subheader(f"🤖 AI 專家診斷：{selected_stock['stock_name']}")
             
             # 自動生成個股AI提示詞
-            expert_prompt = f"""你是專業短線交易員。請深度分析股票 {selected_stock['symbol']} {selected_stock['stock_name']}：
+            expert_prompt = f"""你是專業短線交易員。請深度分析股票- 分析日期：{today}（台灣時間） {selected_stock['symbol']} {selected_stock['stock_name']}：
 
 ## 基本資料
 - 市場：TW | 產業：{selected_stock.get('sector', 'N/A')}
@@ -378,7 +394,12 @@ if supabase:
                         """,
                         unsafe_allow_html=True
                     )
-                    report_text = f"# {selected_stock['stock_name']} AI分析報告\n\n日期：{today}\n\n{ai_response}"
+
+                    # 舊：report_text = f"# {selected_stock['stock_name']} AI分析報告\n\n日期：{today}\n\n{ai_response}"
+                    # 新：
+                    report_text = f"# {selected_stock['stock_name']} AI分析報告\n\n日期：{today}（台灣時間）\n\n{ai_response}"
+
+                    
                     st.download_button(
                         label="📥 下載分析報告 (.md)",
                         data=report_text.encode('utf-8'),
@@ -461,4 +482,7 @@ with col_tool3:
 with col_tool4:
     st.page_link("https://tw.stock.yahoo.com/", label="Yahoo股市", icon="💹")
 
-st.caption(f"Alpha-Refinery 漲停戰情室 2.0 | 版本：{datetime.now().strftime('%Y.%m.%d')} | 數據僅供參考，投資有風險")
+
+# 舊：st.caption(f"Alpha-Refinery 漲停戰情室 2.0 | 版本：{datetime.now().strftime('%Y.%m.%d')} | 數據僅供參考，投資有風險")
+# 新：
+st.caption(f"Alpha-Refinery 漲停戰情室 2.0 | 版本：{taiwan_now.strftime('%Y.%m.%d')} | 數據僅供參考，投資有風險")
