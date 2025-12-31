@@ -616,6 +616,7 @@ def run_monitor():
                     ret = (curr_close / prev_close) - 1
                     threshold = 0.1 if stock_info['is_rotc'] else 0.098
                     # 在迴圈內部：當判定 ret >= threshold 時
+                    # ... 之前的掃描邏輯 ...
                     if ret >= threshold:
                         info = {
                             'symbol': symbol,
@@ -629,44 +630,55 @@ def run_monitor():
                         limit_up_stocks.append(info)
                         found_count += 1
                     
-                        # 【步驟 1】立刻寫入資料庫（基礎資料）
+                        # 1. 【即時同步】立刻寫入資料庫，確保網頁端（儀表板）有資料
                         if supabase:
                             save_stock_with_analysis(info)
-                            log(f"📍 資料庫已記錄: {symbol}")
+                            log(f"📍 DB 已即時同步: {symbol}")
                     
-                        # 【步驟 2】執行 AI 分析
-                        ai_comment = "AI 額度已用完，請稍後至網頁版查看。"
+                        # 2. 【邊跑邊問】呼叫 AI 分析
+                        ai_comment = "AI 分析處理中，請稍後查看儀表板。"
                         if ai_analyzer and ai_analyzer.is_available():
                             try:
-                                log(f"🤖 正在分析 AI: {symbol}...")
+                                log(f"🤖 正在為 {symbol} 請求 AI 分析...")
+                                # 這裡會因為 time.sleep 產生的間隔，保護免費版 Quota
                                 res = ai_analyzer.analyze_individual_stock(info)
                                 if res:
                                     ai_comment = res
                                     info['ai_comment'] = ai_comment
-                                    # 補更 AI 點評到資料庫
+                                    # 補更 AI 評論到 DB
                                     save_stock_with_analysis(info)
-                                    log(f"✅ AI 分析更新成功: {symbol}")
+                                    log(f"✅ AI 分析已補更至 DB: {symbol}")
                             except Exception as e:
-                                log(f"⚠️ AI 失敗 {symbol}: {str(e)[:50]}")
+                                if "429" in str(e):
+                                    log(f"⚠️ Gemini 額度用盡，跳過 {symbol} 分析")
+                                else:
+                                    log(f"⚠️ AI 失敗 {symbol}: {str(e)[:50]}")
                     
-                        # 【步驟 3】立刻發送 Telegram 通知（包含 AI 點評）
+                        # 3. 【逐筆發送】發送 Telegram 通知（含儀表板連結）
                         try:
                             stock_code = symbol.split('.')[0]
-                            emoji = "🚀"
+                            # 定義你的儀表板網址
+                            dashboard_url = "https://tw-stock-intraday-monitor-d4wusvuh9sys8uumcdwms3.streamlit.app/%E5%80%8B%E8%82%A1AI%E5%88%86%E6%9E%90"
+                            
+                            # 決定 Emoji 豐富度
+                            emoji = "🚀" if not info['is_rotc'] else "🧧"
+                            
                             msg = (
-                                f"{emoji} *發現強勢漲停股: {info['name']}* ({symbol})\n"
-                                f"📈 漲幅: {ret:.2%} | 價格: {info['price']:.2f}\n"
-                                f"📊 產業: {info['sector']}\n"
-                                f"🤖 AI點評: {ai_comment[:200]}...\n" # 取前200字避免訊息過長
-                                f"🔗 [查看K線](https://www.wantgoo.com/stock/{stock_code}/technical-chart)"
+                                f"{emoji} *發現漲停強勢股: {info['name']}* ({symbol})\n"
+                                f"📈 漲幅: {ret:.2%} | 💵 價格: {info['price']:.2f}\n"
+                                f"🏭 產業: {info['sector']}\n"
+                                f"🤖 AI點評: {ai_comment[:150]}...\n\n"
+                                f"🔗 [查看網頁儀表板]({dashboard_url})\n"
+                                f"📊 [玩股網K線](https://www.wantgoo.com/stock/{stock_code}/technical-chart)"
                             )
-                            send_telegram_msg(msg, delay=1.0) # 這裡的 delay 是發完後的微調
+                            # 逐筆發送，每筆間隔會被下方的 sleep 拉開，不會觸發 429
+                            send_telegram_msg(msg, delay=1.0)
                             log(f"📤 Telegram 推播完成: {symbol}")
                         except Exception as e:
                             log(f"❌ Telegram 發送失敗 {symbol}: {e}")
                     
-                        # 【步驟 4】強制冷卻：保護 Gemini API 額度 (重要！)
-                        # 建議至少 6~8 秒，因為免費版 1.5 Flash 限制很高
+                        # 4. 【冷卻時間】保護 Gemini 免費版配額 (15 RPM)
+                        # 設定 6~9 秒，確保一分鐘內請求不超過 10 次，非常穩健
                         time.sleep(random.uniform(6.0, 9.0))
 
                         
@@ -822,6 +834,7 @@ if __name__ == "__main__":
     except Exception as e:
         log(f"❌ 程式執行錯誤: {e}")
         send_telegram_msg(f"❌ *程式執行錯誤*\n錯誤訊息: {str(e)[:100]}")
+
 
 
 
