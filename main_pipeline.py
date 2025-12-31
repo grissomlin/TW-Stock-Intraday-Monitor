@@ -642,7 +642,15 @@ def run_monitor():
             time.sleep(random.uniform(3.0, 5.0))
     
     log(f"掃描完成，發現 {found_count} 檔漲停股票")
-    
+    # ⭐⭐⭐【關鍵修正：先存檔，確保資料一定進 DB】⭐⭐⭐
+    if limit_up_stocks and supabase:
+        log(f"💾 先寫入 {len(limit_up_stocks)} 檔漲停基本資料（不含 AI）")
+        for stock in limit_up_stocks:
+            try:
+                save_stock_with_analysis(stock)
+            except Exception as e:
+                log(f"⚠️ 初始存檔失敗 {stock['symbol']}: {e}")
+
     # ========== AI分析階段 ==========
     if limit_up_stocks and ai_analyzer and ai_analyzer.is_available():
         log("🤖 開始AI分析階段...")
@@ -799,3 +807,4 @@ if __name__ == "__main__":
     except Exception as e:
         log(f"❌ 程式執行錯誤: {e}")
         send_telegram_msg(f"❌ *程式執行錯誤*\n錯誤訊息: {str(e)[:100]}")
+
