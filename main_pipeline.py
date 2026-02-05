@@ -6,31 +6,25 @@ import sys
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 
-from config import load_config
+from config import Config
 from telegram_client import TelegramClient
 from db_repo import DBRepo
 from ai_service import AIService
 from monitor import run_monitor
 
+
 def main():
-    cfg = load_config()
+    # （可選）你要強制檢查 Telegram 一定要有就打開
+    # Config.validate(require_supabase=False)
 
-    print("🔧 環境變數檢查:")
-    print(f"  SUPABASE_URL: {'已設置' if cfg.get('SUPABASE_URL') else '未設置'}")
-    print(f"  SUPABASE_KEY: {'已設置' if cfg.get('SUPABASE_KEY') else '未設置'}")
-    print(f"  TG_TOKEN: {'已設置' if cfg.get('TG_TOKEN') else '未設置'}")
-    print(f"  TG_CHAT_ID: {'已設置' if cfg.get('TG_CHAT_ID') else '未設置'}")
-    print(f"  GEMINI_API_KEY: {'已設置' if cfg.get('GEMINI_API_KEY') else '未設置'}")
-    print(f"  ENABLE_AI: {cfg.get('ENABLE_AI')}")
-    print(f"  ENABLE_AI_INDIVIDUAL: {cfg.get('ENABLE_AI_INDIVIDUAL')}")
-    print(f"  ENABLE_AI_SECTOR: {cfg.get('ENABLE_AI_SECTOR')}")
-    print(f"  ENABLE_AI_MARKET: {cfg.get('ENABLE_AI_MARKET')}")
+    Config.debug_print()
 
-    db_repo = DBRepo(cfg.get("SUPABASE_URL"), cfg.get("SUPABASE_KEY"))
-    tg = TelegramClient(cfg.get("TG_TOKEN"), cfg.get("TG_CHAT_ID"))
-    ai = AIService(cfg, db_repo)
+    db_repo = DBRepo(Config.SUPABASE_URL, Config.SUPABASE_KEY)
+    tg = TelegramClient(Config.TELEGRAM_BOT_TOKEN, Config.TELEGRAM_CHAT_ID)
+    ai = AIService(Config, db_repo)  # ✅ 這裡改成傳 Config 類
 
-    run_monitor(cfg, tg, db_repo, ai)
+    run_monitor(tg, db_repo, ai)     # ✅ 這裡不再傳 cfg dict
+
 
 if __name__ == "__main__":
     main()
