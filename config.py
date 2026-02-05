@@ -1,15 +1,13 @@
 # -*- coding: utf-8 -*-
 """
 config.py - 設定檔（整合版）
-- 讀取 .env
-- Supabase / Telegram / Gemini
-- AI 開關（總開關 + 子開關）
-- 漲停閾值 / 批次 / 延遲
-- ✅提供 load_config() 給 main_pipeline.py 使用
+✅ 自證版：一載入就印出自己的檔案路徑，避免 import 到別的 config.py
 """
 
 import os
 from dotenv import load_dotenv
+
+print(f"✅ LOADING config.py FROM: {__file__}", flush=True)
 
 load_dotenv()
 
@@ -43,21 +41,12 @@ def _env_float(name: str, default: float) -> float:
 
 
 class Config:
-    # =========================
-    # Supabase
-    # =========================
     SUPABASE_URL = os.getenv("SUPABASE_URL")
     SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-    # =========================
-    # Telegram
-    # =========================
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-    # =========================
-    # AI (Gemini)
-    # =========================
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
     ENABLE_AI = _env_bool("ENABLE_AI", default=True)
@@ -65,101 +54,53 @@ class Config:
     ENABLE_AI_SECTOR = _env_bool("ENABLE_AI_SECTOR", default=True)
     ENABLE_AI_MARKET = _env_bool("ENABLE_AI_MARKET", default=True)
 
-    # =========================
-    # 漲停閾值
-    # =========================
     MAIN_BOARD_THRESHOLD = _env_float("MAIN_BOARD_THRESHOLD", 0.098)
     ROTC_THRESHOLD = _env_float("ROTC_THRESHOLD", 0.10)
 
-    # =========================
-    # 批次 / 節奏
-    # =========================
     BATCH_SIZE = _env_int("BATCH_SIZE", 120)
     REQUEST_DELAY = _env_float("REQUEST_DELAY", 1.5)
 
-    # AI 冷卻（保護 RPM）
     AI_COOLDOWN_MIN = _env_float("AI_COOLDOWN_MIN", 6.0)
     AI_COOLDOWN_MAX = _env_float("AI_COOLDOWN_MAX", 9.0)
-
     AI_SECTOR_COOLDOWN_MIN = _env_float("AI_SECTOR_COOLDOWN_MIN", 12.0)
     AI_SECTOR_COOLDOWN_MAX = _env_float("AI_SECTOR_COOLDOWN_MAX", 15.0)
 
-    # Dashboard URL（可選）
     DASHBOARD_URL = os.getenv(
         "DASHBOARD_URL",
         "https://tw-stock-intraday-monitor-d4wusvuh9sys8uumcdwms3.streamlit.app/%E5%80%8B%E8%82%A1AI%E5%88%86%E6%9E%90",
     )
 
-    @classmethod
-    def effective_ai_enabled(cls) -> bool:
-        return bool(cls.ENABLE_AI) and bool(cls.GEMINI_API_KEY)
-
-    @classmethod
-    def effective_ai_individual(cls) -> bool:
-        return cls.effective_ai_enabled() and bool(cls.ENABLE_AI_INDIVIDUAL)
-
-    @classmethod
-    def effective_ai_sector(cls) -> bool:
-        return cls.effective_ai_enabled() and bool(cls.ENABLE_AI_SECTOR)
-
-    @classmethod
-    def effective_ai_market(cls) -> bool:
-        return cls.effective_ai_enabled() and bool(cls.ENABLE_AI_MARKET)
-
-    @classmethod
-    def debug_print(cls):
-        print("🔧 Config 檢查：")
-        print(f"  SUPABASE_URL: {'已設置' if cls.SUPABASE_URL else '未設置'}")
-        print(f"  SUPABASE_KEY: {'已設置' if cls.SUPABASE_KEY else '未設置'}")
-        print(f"  TELEGRAM_BOT_TOKEN: {'已設置' if cls.TELEGRAM_BOT_TOKEN else '未設置'}")
-        print(f"  TELEGRAM_CHAT_ID: {'已設置' if cls.TELEGRAM_CHAT_ID else '未設置'}")
-        print(f"  GEMINI_API_KEY: {'已設置' if cls.GEMINI_API_KEY else '未設置'}")
-        print(f"  ENABLE_AI: {cls.ENABLE_AI}")
-        print(f"  ENABLE_AI_INDIVIDUAL: {cls.ENABLE_AI_INDIVIDUAL}")
-        print(f"  ENABLE_AI_SECTOR: {cls.ENABLE_AI_SECTOR}")
-        print(f"  ENABLE_AI_MARKET: {cls.ENABLE_AI_MARKET}")
-        print(f"  BATCH_SIZE: {cls.BATCH_SIZE}")
-        print(f"  REQUEST_DELAY: {cls.REQUEST_DELAY}")
-        print(f"  MAIN_BOARD_THRESHOLD: {cls.MAIN_BOARD_THRESHOLD}")
-        print(f"  ROTC_THRESHOLD: {cls.ROTC_THRESHOLD}")
-
 
 def load_config() -> dict:
-    """
-    ✅ main_pipeline.py 期待的 API：回傳 dict
-    並且統一 key 名稱（避免 TG_TOKEN / TELEGRAM_BOT_TOKEN 混用）
-    """
     cfg = {
-        # supabase
         "SUPABASE_URL": Config.SUPABASE_URL,
         "SUPABASE_KEY": Config.SUPABASE_KEY,
 
-        # telegram（你 main_pipeline 用 TG_TOKEN/TG_CHAT_ID，所以這裡也給）
+        # main_pipeline.py 用 TG_TOKEN/TG_CHAT_ID
         "TG_TOKEN": Config.TELEGRAM_BOT_TOKEN,
         "TG_CHAT_ID": Config.TELEGRAM_CHAT_ID,
 
-        # ai
         "GEMINI_API_KEY": Config.GEMINI_API_KEY,
         "ENABLE_AI": Config.ENABLE_AI,
         "ENABLE_AI_INDIVIDUAL": Config.ENABLE_AI_INDIVIDUAL,
         "ENABLE_AI_SECTOR": Config.ENABLE_AI_SECTOR,
         "ENABLE_AI_MARKET": Config.ENABLE_AI_MARKET,
 
-        # thresholds
         "MAIN_BOARD_THRESHOLD": Config.MAIN_BOARD_THRESHOLD,
         "ROTC_THRESHOLD": Config.ROTC_THRESHOLD,
 
-        # batching
         "BATCH_SIZE": Config.BATCH_SIZE,
         "REQUEST_DELAY": Config.REQUEST_DELAY,
 
-        # cooldowns
         "AI_COOLDOWN_MIN": Config.AI_COOLDOWN_MIN,
         "AI_COOLDOWN_MAX": Config.AI_COOLDOWN_MAX,
         "AI_SECTOR_COOLDOWN_MIN": Config.AI_SECTOR_COOLDOWN_MIN,
         "AI_SECTOR_COOLDOWN_MAX": Config.AI_SECTOR_COOLDOWN_MAX,
 
-        # misc
         "DASHBOARD_URL": Config.DASHBOARD_URL,
     }
     return cfg
+
+
+__all__ = ["Config", "load_config"]
+print("✅ config.py export OK: load_config exists =", callable(load_config), flush=True)
