@@ -5,6 +5,7 @@ config.py - 設定檔（整合版）
 - Supabase / Telegram / Gemini
 - AI 開關（總開關 + 子開關）
 - 漲停閾值 / 批次 / 延遲
+- ✅提供 load_config() 給 main_pipeline.py 使用
 """
 
 import os
@@ -14,7 +15,6 @@ load_dotenv()
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
-    """解析 .env 布林值：1/true/yes/on/y => True；0/false/no/off/n => False"""
     v = os.getenv(name)
     if v is None:
         return default
@@ -43,8 +43,6 @@ def _env_float(name: str, default: float) -> float:
 
 
 class Config:
-    """設定類（整合版）"""
-
     # =========================
     # Supabase
     # =========================
@@ -62,39 +60,38 @@ class Config:
     # =========================
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-    # ✅ AI 開關（你要先關 AI 給別的 repo 用，就設 ENABLE_AI=0）
     ENABLE_AI = _env_bool("ENABLE_AI", default=True)
-
-    # ✅ 子開關：可更細控制（沒設就跟著總開關）
-    ENABLE_AI_INDIVIDUAL = _env_bool("ENABLE_AI_INDIVIDUAL", default=True)  # 逐檔個股 AI
-    ENABLE_AI_SECTOR = _env_bool("ENABLE_AI_SECTOR", default=True)          # 產業 AI
-    ENABLE_AI_MARKET = _env_bool("ENABLE_AI_MARKET", default=True)          # 市場總結 AI
+    ENABLE_AI_INDIVIDUAL = _env_bool("ENABLE_AI_INDIVIDUAL", default=True)
+    ENABLE_AI_SECTOR = _env_bool("ENABLE_AI_SECTOR", default=True)
+    ENABLE_AI_MARKET = _env_bool("ENABLE_AI_MARKET", default=True)
 
     # =========================
     # 漲停閾值
     # =========================
-    MAIN_BOARD_THRESHOLD = _env_float("MAIN_BOARD_THRESHOLD", 0.098)  # 上市/上櫃
-    ROTC_THRESHOLD = _env_float("ROTC_THRESHOLD", 0.10)              # 興櫃
+    MAIN_BOARD_THRESHOLD = _env_float("MAIN_BOARD_THRESHOLD", 0.098)
+    ROTC_THRESHOLD = _env_float("ROTC_THRESHOLD", 0.10)
 
     # =========================
-    # 批次設定 / 下載節奏
+    # 批次 / 節奏
     # =========================
-    BATCH_SIZE = _env_int("BATCH_SIZE", 150)
+    BATCH_SIZE = _env_int("BATCH_SIZE", 120)
+    REQUEST_DELAY = _env_float("REQUEST_DELAY", 1.5)
 
-    # 批次間隔（避免 Yahoo Finance / TWSE 被擋）
-    REQUEST_DELAY = _env_float("REQUEST_DELAY", 1.0)
-
-    # 若你在「逐檔 AI」階段要 sleep (保護 RPM)
+    # AI 冷卻（保護 RPM）
     AI_COOLDOWN_MIN = _env_float("AI_COOLDOWN_MIN", 6.0)
     AI_COOLDOWN_MAX = _env_float("AI_COOLDOWN_MAX", 9.0)
 
-    # 產業分析每次間隔（保護 RPM）
     AI_SECTOR_COOLDOWN_MIN = _env_float("AI_SECTOR_COOLDOWN_MIN", 12.0)
     AI_SECTOR_COOLDOWN_MAX = _env_float("AI_SECTOR_COOLDOWN_MAX", 15.0)
 
+    # Dashboard URL（可選）
+    DASHBOARD_URL = os.getenv(
+        "DASHBOARD_URL",
+        "https://tw-stock-intraday-monitor-d4wusvuh9sys8uumcdwms3.streamlit.app/%E5%80%8B%E8%82%A1AI%E5%88%86%E6%9E%90",
+    )
+
     @classmethod
     def effective_ai_enabled(cls) -> bool:
-        """總開關：一個地方統一判斷 AI 是否允許"""
         return bool(cls.ENABLE_AI) and bool(cls.GEMINI_API_KEY)
 
     @classmethod
@@ -110,35 +107,7 @@ class Config:
         return cls.effective_ai_enabled() and bool(cls.ENABLE_AI_MARKET)
 
     @classmethod
-    def validate(cls, require_supabase: bool = False) -> bool:
-        """
-        驗證設定
-        - require_supabase=False：Supabase 可選（沒設就只掃描不存）
-        - Telegram token 建議必填（如果你要推播）
-        """
-        missing = []
-
-        # Telegram（你原本 validate 只有 token；我也保留 chat_id 的檢查更合理）
-        if not cls.TELEGRAM_BOT_TOKEN:
-            missing.append("TELEGRAM_BOT_TOKEN")
-        if not cls.TELEGRAM_CHAT_ID:
-            missing.append("TELEGRAM_CHAT_ID")
-
-        # Supabase（可選）
-        if require_supabase:
-            if not cls.SUPABASE_URL:
-                missing.append("SUPABASE_URL")
-            if not cls.SUPABASE_KEY:
-                missing.append("SUPABASE_KEY")
-
-        if missing:
-            raise ValueError(f"缺少環境變數: {', '.join(missing)}")
-
-        return True
-
-    @classmethod
     def debug_print(cls):
-        """方便你啟動時印設定（不會印出 key 本身）"""
         print("🔧 Config 檢查：")
         print(f"  SUPABASE_URL: {'已設置' if cls.SUPABASE_URL else '未設置'}")
         print(f"  SUPABASE_KEY: {'已設置' if cls.SUPABASE_KEY else '未設置'}")
@@ -153,3 +122,44 @@ class Config:
         print(f"  REQUEST_DELAY: {cls.REQUEST_DELAY}")
         print(f"  MAIN_BOARD_THRESHOLD: {cls.MAIN_BOARD_THRESHOLD}")
         print(f"  ROTC_THRESHOLD: {cls.ROTC_THRESHOLD}")
+
+
+def load_config() -> dict:
+    """
+    ✅ main_pipeline.py 期待的 API：回傳 dict
+    並且統一 key 名稱（避免 TG_TOKEN / TELEGRAM_BOT_TOKEN 混用）
+    """
+    cfg = {
+        # supabase
+        "SUPABASE_URL": Config.SUPABASE_URL,
+        "SUPABASE_KEY": Config.SUPABASE_KEY,
+
+        # telegram（你 main_pipeline 用 TG_TOKEN/TG_CHAT_ID，所以這裡也給）
+        "TG_TOKEN": Config.TELEGRAM_BOT_TOKEN,
+        "TG_CHAT_ID": Config.TELEGRAM_CHAT_ID,
+
+        # ai
+        "GEMINI_API_KEY": Config.GEMINI_API_KEY,
+        "ENABLE_AI": Config.ENABLE_AI,
+        "ENABLE_AI_INDIVIDUAL": Config.ENABLE_AI_INDIVIDUAL,
+        "ENABLE_AI_SECTOR": Config.ENABLE_AI_SECTOR,
+        "ENABLE_AI_MARKET": Config.ENABLE_AI_MARKET,
+
+        # thresholds
+        "MAIN_BOARD_THRESHOLD": Config.MAIN_BOARD_THRESHOLD,
+        "ROTC_THRESHOLD": Config.ROTC_THRESHOLD,
+
+        # batching
+        "BATCH_SIZE": Config.BATCH_SIZE,
+        "REQUEST_DELAY": Config.REQUEST_DELAY,
+
+        # cooldowns
+        "AI_COOLDOWN_MIN": Config.AI_COOLDOWN_MIN,
+        "AI_COOLDOWN_MAX": Config.AI_COOLDOWN_MAX,
+        "AI_SECTOR_COOLDOWN_MIN": Config.AI_SECTOR_COOLDOWN_MIN,
+        "AI_SECTOR_COOLDOWN_MAX": Config.AI_SECTOR_COOLDOWN_MAX,
+
+        # misc
+        "DASHBOARD_URL": Config.DASHBOARD_URL,
+    }
+    return cfg
