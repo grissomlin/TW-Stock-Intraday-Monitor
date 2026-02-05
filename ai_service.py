@@ -2,28 +2,31 @@
 from logger import log
 
 class AIService:
-    def __init__(self, cfg: dict, db_repo):
-        self.cfg = cfg
+    def __init__(self, Config, db_repo):
+        self.Config = Config
         self.db_repo = db_repo
         self.ai_analyzer = None
 
-        self.enabled = bool(cfg.get("ENABLE_AI", True))
-        self.enable_individual = bool(cfg.get("ENABLE_AI_INDIVIDUAL", True))
-        self.enable_sector = bool(cfg.get("ENABLE_AI_SECTOR", True))
-        self.enable_market = bool(cfg.get("ENABLE_AI_MARKET", True))
+        self.enabled = bool(Config.ENABLE_AI)
+        self.enable_individual = bool(Config.ENABLE_AI_INDIVIDUAL)
+        self.enable_sector = bool(Config.ENABLE_AI_SECTOR)
+        self.enable_market = bool(Config.ENABLE_AI_MARKET)
 
         if not self.enabled:
             print("⛔ ENABLE_AI=OFF：不初始化 AI 分析器")
             return
 
-        api_key = cfg.get("GEMINI_API_KEY")
+        api_key = Config.GEMINI_API_KEY
         if not api_key:
             print("⚠️ GEMINI_API_KEY 未設置：不初始化 AI 分析器")
             return
 
         try:
             from ai_analyzer import StockAIAnalyzer
-            self.ai_analyzer = StockAIAnalyzer(api_key, db_repo.client if db_repo and db_repo.is_ready() else None)
+            self.ai_analyzer = StockAIAnalyzer(
+                api_key,
+                db_repo.client if db_repo and db_repo.is_ready() else None
+            )
             if self.ai_analyzer and self.ai_analyzer.is_available():
                 print("✅ AI分析器初始化成功")
             else:
